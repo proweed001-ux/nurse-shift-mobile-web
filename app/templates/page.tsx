@@ -3,7 +3,6 @@
 import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { thaiMonths } from '../../lib/date';
-import { exportOtDocx, exportReserveDocx } from '../../lib/documents';
 import { summarize } from '../../lib/logic';
 import { listPlans, loadPersonnel, loadPlan, makeBlankPlan, savePlan } from '../../lib/storage';
 import { MonthPlan } from '../../lib/types';
@@ -77,8 +76,11 @@ export default function TemplatesPage() {
   function exportOt() {
     if (!plan) return;
     try {
-      if (templateMeta.ot) exportOtFromTemplate(plan);
-      else exportOtDocx(plan);
+      if (!templateMeta.ot) {
+        setMessage('ต้องอัปโหลดแม่แบบคำสั่ง OT ก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ');
+        return;
+      }
+      exportOtFromTemplate(plan);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างคำสั่ง OT ไม่สำเร็จ');
     }
@@ -87,8 +89,11 @@ export default function TemplatesPage() {
   function exportReserve() {
     if (!plan) return;
     try {
-      if (templateMeta.reserve) exportReserveFromTemplate(plan);
-      else exportReserveDocx(plan);
+      if (!templateMeta.reserve) {
+        setMessage('ต้องอัปโหลดแม่แบบเวรสแปลก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ');
+        return;
+      }
+      exportReserveFromTemplate(plan);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างเวรสแปลไม่สำเร็จ');
     }
@@ -100,8 +105,8 @@ export default function TemplatesPage() {
     <main className="app-shell">
       <section className="hero">
         <div className="hero-card">
-          <h1>แม่แบบเอกสาร Word</h1>
-          <p>ใช้ไฟล์ Word ต้นฉบับเป็นแม่แบบจริง แล้วเติมข้อมูลเดือนใหม่ลงตารางเดิม เพื่อให้ฟอร์มใกล้ต้นฉบับที่สุด</p>
+          <h1>แม่แบบเอกสาร Word แบบล็อกฟอร์ม</h1>
+          <p>ใช้ไฟล์ Word ต้นฉบับเป็นแม่แบบจริง ระบบจะคงหน้ากระดาษ ฟอนต์ เส้นตาราง หัวเอกสาร และลายเซ็นเดิม แล้วแทนเฉพาะข้อความในตารางเวร</p>
         </div>
         <div className="quick-grid">
           <div className="stat"><div className="stat-label">เช้า</div><div className="stat-value">{totals.morning}</div></div>
@@ -138,12 +143,12 @@ export default function TemplatesPage() {
 
       <section className="panel-grid">
         <div className="card">
-          <h2>1) ตั้งค่าแม่แบบ Word</h2>
-          <p className="hint">อัปโหลดไฟล์ต้นฉบับ .docx ครั้งเดียว เครื่องนี้จะจำไว้ในเบราว์เซอร์</p>
+          <h2>1) ตั้งค่าแม่แบบ Word ต้นฉบับ</h2>
+          <p className="hint">ต้องอัปโหลดไฟล์ต้นฉบับ .docx ก่อนสร้างเอกสาร เพื่อไม่ให้ระบบใช้ฟอร์มที่สร้างใหม่</p>
 
           <div className="person-card">
             <div className="person-title">คำสั่ง OT พยาบาล</div>
-            <div className="muted">{templateMeta.ot ? `ใช้แม่แบบ: ${templateMeta.ot.name}` : 'ยังไม่ได้ตั้งค่า — จะใช้ฟอร์มมาตรฐานแทน'}</div>
+            <div className="muted">{templateMeta.ot ? `ล็อกฟอร์มจากไฟล์: ${templateMeta.ot.name}` : 'ยังไม่ได้ตั้งค่า — ยังสร้างแบบล็อกฟอร์มไม่ได้'}</div>
             <div className="actions">
               <label className="btn primary">อัปโหลดแม่แบบ OT<input hidden type="file" accept=".docx" onChange={(event) => handleTemplateUpload('ot', event)} /></label>
               {templateMeta.ot ? <button className="btn danger" onClick={() => removeTemplate('ot')}>ลบ</button> : null}
@@ -152,7 +157,7 @@ export default function TemplatesPage() {
 
           <div className="person-card" style={{ marginTop: 10 }}>
             <div className="person-title">เวรสแปล / เวรสำรอง</div>
-            <div className="muted">{templateMeta.reserve ? `ใช้แม่แบบ: ${templateMeta.reserve.name}` : 'ยังไม่ได้ตั้งค่า — จะใช้ฟอร์มมาตรฐานแทน'}</div>
+            <div className="muted">{templateMeta.reserve ? `ล็อกฟอร์มจากไฟล์: ${templateMeta.reserve.name}` : 'ยังไม่ได้ตั้งค่า — ยังสร้างแบบล็อกฟอร์มไม่ได้'}</div>
             <div className="actions">
               <label className="btn primary">อัปโหลดแม่แบบเวรสแปล<input hidden type="file" accept=".docx" onChange={(event) => handleTemplateUpload('reserve', event)} /></label>
               {templateMeta.reserve ? <button className="btn danger" onClick={() => removeTemplate('reserve')}>ลบ</button> : null}
@@ -161,11 +166,11 @@ export default function TemplatesPage() {
         </div>
 
         <div className="card">
-          <h2>2) สร้างไฟล์จากแม่แบบ</h2>
-          <p className="hint">ระบบจะเปิดไฟล์ Word ต้นฉบับ ลบรายการเดือนเก่าในตาราง แล้วใส่ข้อมูลเดือน {thaiMonths[month - 1]} {buddhistYear}</p>
+          <h2>2) สร้างไฟล์จากฟอร์มเดิม</h2>
+          <p className="hint">ระบบจะใช้โครงสร้าง Word เดิมทั้งหมด แล้วแทนเฉพาะเดือน/ปี/วันที่/เวลา/ชื่อ/ตำแหน่งในตาราง</p>
           <div className="actions">
-            <button className="btn primary" onClick={exportOt}>สร้างคำสั่ง OT</button>
-            <button className="btn primary" onClick={exportReserve}>สร้างเวรสแปล</button>
+            <button className="btn primary" onClick={exportOt}>สร้างคำสั่ง OT จากฟอร์มเดิม</button>
+            <button className="btn primary" onClick={exportReserve}>สร้างเวรสแปลจากฟอร์มเดิม</button>
           </div>
         </div>
       </section>
