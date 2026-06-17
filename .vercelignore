@@ -1,0 +1,10 @@
+node_modules
+.next
+*.zip
+check_mobile
+nurse-shift-system
+nurse-shift-system.zip
+nurse-shift-system-mobile.zip
+build_project.py
+*.xlsx
+*.docx
