@@ -1,5 +1,5 @@
 import { daysInMonth } from './date';
-import { ActiveShiftCode, MonthPlan, Personnel, ShiftCell, ShiftCode, SummaryRow, ValidationIssue, activeShiftCodes, nonWorkShiftCodes, workShiftCodes } from './types';
+import { ActiveShiftCode, MonthPlan, Personnel, ShiftCell, ShiftCode, SummaryRow, ValidationIssue, WorkShiftCode, activeShiftCodes, nonWorkShiftCodes, workShiftCodes } from './types';
 
 export function normalizeShiftCode(value: unknown): ShiftCode {
   const raw = String(value ?? '').trim();
@@ -34,13 +34,71 @@ export function normalizeShiftCodes(value: unknown): ActiveShiftCode[] {
   return Array.from(new Set(codes)).sort((a, b) => activeShiftCodes.indexOf(a) - activeShiftCodes.indexOf(b));
 }
 
+export function normalizeOtCodes(value: unknown): WorkShiftCode[] {
+  return normalizeShiftCodes(value).filter((code): code is WorkShiftCode => workShiftCodes.includes(code as WorkShiftCode));
+}
+
+export function parseShiftCellValue(value: unknown): { codes: ActiveShiftCode[]; otCodes: WorkShiftCode[] } {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { codes: [], otCodes: [] };
+  const otParts: string[] = [];
+  let regularRaw = raw
+    .replace(/\(?\s*OT\s*[:：]?\s*([ชบด\s,+/|\\]+)\s*\)?/gi, (_match, otText: string) => {
+      otParts.push(otText);
+      return ' ';
+    })
+    .replace(/([ชบด])\*/g, (_match, code: string) => {
+      otParts.push(code);
+      return ' ';
+    });
+
+  regularRaw = regularRaw.replace(/\s+/g, ' ').trim();
+  return {
+    codes: normalizeShiftCodes(regularRaw),
+    otCodes: normalizeOtCodes(otParts.join(' ')),
+  };
+}
+
+function sortActiveCodes(codes: ActiveShiftCode[]): ActiveShiftCode[] {
+  return Array.from(new Set(codes)).filter((code): code is ActiveShiftCode => activeShiftCodes.includes(code)).sort((a, b) => activeShiftCodes.indexOf(a) - activeShiftCodes.indexOf(b));
+}
+
+function sortOtCodes(codes: WorkShiftCode[]): WorkShiftCode[] {
+  return Array.from(new Set(codes)).filter((code): code is WorkShiftCode => workShiftCodes.includes(code)).sort((a, b) => workShiftCodes.indexOf(a) - workShiftCodes.indexOf(b));
+}
+
+function upsertCell(plan: MonthPlan, personnelId: string, day: number, patch: Partial<ShiftCell>): MonthPlan {
+  const current = plan.shifts.find((item) => item.personnelId === personnelId && item.day === day);
+  const nextCell: ShiftCell = {
+    personnelId,
+    day,
+    codes: current ? getShiftCodes(plan, personnelId, day) : [],
+    otCodes: current ? getOtCodes(plan, personnelId, day) : [],
+    note: current?.note,
+    ...patch,
+    code: undefined,
+  };
+  nextCell.codes = sortActiveCodes(nextCell.codes ?? []);
+  nextCell.otCodes = sortOtCodes(nextCell.otCodes ?? []);
+
+  const without = plan.shifts.filter((item) => !(item.personnelId === personnelId && item.day === day));
+  const shouldKeep = (nextCell.codes?.length ?? 0) > 0 || (nextCell.otCodes?.length ?? 0) > 0 || Boolean(nextCell.note);
+  return { ...plan, shifts: shouldKeep ? [...without, nextCell] : without, updatedAt: new Date().toISOString() };
+}
+
 export function getShiftCodes(plan: MonthPlan, personnelId: string, day: number): ActiveShiftCode[] {
   const cell = plan.shifts.find((item) => item.personnelId === personnelId && item.day === day);
   if (!cell) return [];
   if (Array.isArray(cell.codes)) {
-    return Array.from(new Set(cell.codes.filter((code): code is ActiveShiftCode => activeShiftCodes.includes(code as ActiveShiftCode))));
+    return sortActiveCodes(cell.codes.filter((code): code is ActiveShiftCode => activeShiftCodes.includes(code as ActiveShiftCode)));
   }
   return normalizeShiftCodes(cell.code ?? '');
+}
+
+export function getOtCodes(plan: MonthPlan, personnelId: string, day: number): WorkShiftCode[] {
+  const cell = plan.shifts.find((item) => item.personnelId === personnelId && item.day === day);
+  if (!cell || !Array.isArray(cell.otCodes)) return [];
+  return sortOtCodes(cell.otCodes);
 }
 
 export function getShift(plan: MonthPlan, personnelId: string, day: number): ShiftCode {
@@ -51,11 +109,18 @@ export function getShiftText(plan: MonthPlan, personnelId: string, day: number):
   return getShiftCodes(plan, personnelId, day).join('/');
 }
 
+export function getCellDisplayText(plan: MonthPlan, personnelId: string, day: number): string {
+  const regular = getShiftCodes(plan, personnelId, day).join('/');
+  const ot = getOtCodes(plan, personnelId, day).join('/');
+  return [regular, ot ? `OT:${ot}` : ''].filter(Boolean).join(' ');
+}
+
 export function setShiftCodes(plan: MonthPlan, personnelId: string, day: number, codes: ActiveShiftCode[]): MonthPlan {
-  const cleanCodes = Array.from(new Set(codes)).filter((code): code is ActiveShiftCode => activeShiftCodes.includes(code)).sort((a, b) => activeShiftCodes.indexOf(a) - activeShiftCodes.indexOf(b));
-  const without = plan.shifts.filter((item) => !(item.personnelId === personnelId && item.day === day));
-  const shifts: ShiftCell[] = cleanCodes.length ? [...without, { personnelId, day, codes: cleanCodes }] : without;
-  return { ...plan, shifts, updatedAt: new Date().toISOString() };
+  return upsertCell(plan, personnelId, day, { codes: sortActiveCodes(codes) });
+}
+
+export function setOtCodes(plan: MonthPlan, personnelId: string, day: number, otCodes: WorkShiftCode[]): MonthPlan {
+  return upsertCell(plan, personnelId, day, { otCodes: sortOtCodes(otCodes) });
 }
 
 export function setShift(plan: MonthPlan, personnelId: string, day: number, code: ShiftCode): MonthPlan {
@@ -66,6 +131,12 @@ export function toggleShiftCode(plan: MonthPlan, personnelId: string, day: numbe
   const current = getShiftCodes(plan, personnelId, day);
   const next = current.includes(code) ? current.filter((item) => item !== code) : [...current, code];
   return setShiftCodes(plan, personnelId, day, next);
+}
+
+export function toggleOtCode(plan: MonthPlan, personnelId: string, day: number, code: WorkShiftCode): MonthPlan {
+  const current = getOtCodes(plan, personnelId, day);
+  const next = current.includes(code) ? current.filter((item) => item !== code) : [...current, code];
+  return setOtCodes(plan, personnelId, day, next);
 }
 
 export function validatePlan(plan: MonthPlan): ValidationIssue[] {
@@ -79,7 +150,7 @@ export function validatePlan(plan: MonthPlan): ValidationIssue[] {
         issues.push({ type: 'error', personnelName: person.fullName, day: cell.day, message: 'วันที่เกินจำนวนวันของเดือนนี้' });
       }
       const codes = getShiftCodes(plan, person.id, cell.day);
-      const hasWork = codes.some((code) => workShiftCodes.includes(code));
+      const hasWork = codes.some((code) => workShiftCodes.includes(code as WorkShiftCode));
       const hasNonWork = codes.some((code) => nonWorkShiftCodes.includes(code));
       if (hasWork && hasNonWork) {
         issues.push({ type: 'warning', personnelName: person.fullName, day: cell.day, message: 'มีทั้งเวรทำงานและวันหยุด/วันลาในช่องเดียวกัน' });
@@ -113,6 +184,7 @@ export function validatePlan(plan: MonthPlan): ValidationIssue[] {
 export function summarize(plan: MonthPlan): SummaryRow[] {
   return plan.personnel.filter((p) => p.active).map((person) => {
     const count = (code: ActiveShiftCode) => plan.shifts.filter((cell) => cell.personnelId === person.id && getShiftCodes(plan, person.id, cell.day).includes(code)).length;
+    const otCount = (code: WorkShiftCode) => plan.shifts.filter((cell) => cell.personnelId === person.id && getOtCodes(plan, person.id, cell.day).includes(code)).length;
     const morning = count('ช');
     const afternoon = count('บ');
     const night = count('ด');
@@ -120,6 +192,9 @@ export function summarize(plan: MonthPlan): SummaryRow[] {
     const sick = count('SL');
     const personalLeave = count('PL');
     const holiday = count('PH');
+    const otMorning = otCount('ช');
+    const otAfternoon = otCount('บ');
+    const otNight = otCount('ด');
     return {
       personnel: person,
       morning,
@@ -132,6 +207,10 @@ export function summarize(plan: MonthPlan): SummaryRow[] {
       holiday,
       workTotal: morning + afternoon + night,
       leaveTotal: vacation + sick + personalLeave,
+      otMorning,
+      otAfternoon,
+      otNight,
+      otTotal: otMorning + otAfternoon + otNight,
     };
   });
 }
@@ -144,7 +223,12 @@ export function copyPlanToMonth(source: MonthPlan, month: number, buddhistYear: 
     month,
     year: buddhistYear - 543,
     buddhistYear,
-    shifts: source.shifts.filter((cell) => cell.day <= targetDays).map((cell) => ({ ...cell, codes: cell.codes ?? normalizeShiftCodes(cell.code), code: undefined })),
+    shifts: source.shifts.filter((cell) => cell.day <= targetDays).map((cell) => ({
+      ...cell,
+      codes: cell.codes ?? normalizeShiftCodes(cell.code),
+      otCodes: sortOtCodes(cell.otCodes ?? []),
+      code: undefined,
+    })),
     updatedAt: new Date().toISOString(),
   };
 }
