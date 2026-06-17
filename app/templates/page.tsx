@@ -7,7 +7,7 @@ import { summarize } from '../../lib/logic';
 import { listPlans, loadPersonnel, loadPlan, makeBlankPlan, savePlan } from '../../lib/storage';
 import { MonthPlan } from '../../lib/types';
 import { clearTemplate, loadTemplateMeta, saveTemplateFile, TemplateKind, TemplateMeta } from '../../lib/template-documents';
-import { exportOtFromTemplateStrict, exportReserveFromTemplateStrict } from '../../lib/template-documents-strict';
+import { exportOtFromTemplateStrict2, exportReserveFromTemplateStrict2 } from '../../lib/template-documents-strict2';
 
 const now = new Date();
 const defaultMonth = now.getMonth() + 1;
@@ -82,7 +82,7 @@ export default function TemplatesPage() {
         setMessage('ต้องอัปโหลดแม่แบบคำสั่ง OT ก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ');
         return;
       }
-      exportOtFromTemplateStrict(plan);
+      exportOtFromTemplateStrict2(plan);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างคำสั่ง OT ไม่สำเร็จ');
     }
@@ -95,7 +95,7 @@ export default function TemplatesPage() {
         setMessage('ต้องอัปโหลดแม่แบบเวรสแปลก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ');
         return;
       }
-      exportReserveFromTemplateStrict(plan);
+      exportReserveFromTemplateStrict2(plan);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างเวรสแปลไม่สำเร็จ');
     }
