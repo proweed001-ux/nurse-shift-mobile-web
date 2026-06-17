@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { daysInMonth } from './date';
-import { normalizeShiftCode, replacePersonnelByName, summarize } from './logic';
+import { getShiftText, normalizeShiftCodes, replacePersonnelByName, summarize } from './logic';
 import { MonthPlan, Personnel, ShiftCell } from './types';
 
 export async function importShiftExcel(file: File, month: number, buddhistYear: number, currentPersonnel: Personnel[]): Promise<MonthPlan> {
@@ -26,8 +26,8 @@ export async function importShiftExcel(file: File, month: number, buddhistYear: 
       const possibleKeys = [String(day), `${day}`, `${day}.0`, `วันที่ ${day}`];
       const dayKey = keys.find((key) => possibleKeys.includes(key.trim()));
       if (!dayKey) continue;
-      const code = normalizeShiftCode(row[dayKey]);
-      if (code) shifts.push({ personnelId: person.id, day, code });
+      const codes = normalizeShiftCodes(row[dayKey]);
+      if (codes.length) shifts.push({ personnelId: person.id, day, codes });
     }
   });
 
@@ -70,7 +70,7 @@ export function exportShiftTable(plan: MonthPlan): void {
   const rows = plan.personnel.filter((p) => p.active).map((person) => {
     const row: Record<string, string | number> = { ชื่อ: person.fullName };
     for (let day = 1; day <= totalDays; day += 1) {
-      row[String(day)] = plan.shifts.find((s) => s.personnelId === person.id && s.day === day)?.code ?? '';
+      row[String(day)] = getShiftText(plan, person.id, day);
     }
     return row;
   });
