@@ -151,7 +151,7 @@ export function validatePlan(plan: MonthPlan): ValidationIssue[] {
       }
       const codes = getShiftCodes(plan, person.id, cell.day);
       const hasWork = codes.some((code) => workShiftCodes.includes(code as WorkShiftCode));
-      const hasNonWork = codes.some((code) => nonWorkShiftCodes.includes(code));
+      const hasNonWork = codes.some((code) => nonWorkShiftCodes.includes(code as never));
       if (hasWork && hasNonWork) {
         issues.push({ type: 'warning', personnelName: person.fullName, day: cell.day, message: 'มีทั้งเวรทำงานและวันหยุด/วันลาในช่องเดียวกัน' });
       }
