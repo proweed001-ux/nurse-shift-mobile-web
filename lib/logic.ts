@@ -1,5 +1,5 @@
 import { daysInMonth } from './date';
-import { MonthPlan, Personnel, ShiftCell, ShiftCode, SummaryRow, ValidationIssue } from './types';
+import { ActiveShiftCode, MonthPlan, Personnel, ShiftCell, ShiftCode, SummaryRow, ValidationIssue, activeShiftCodes, nonWorkShiftCodes, workShiftCodes } from './types';
 
 export function normalizeShiftCode(value: unknown): ShiftCode {
   const raw = String(value ?? '').trim();
@@ -16,14 +16,56 @@ export function normalizeShiftCode(value: unknown): ShiftCode {
   return '';
 }
 
+export function normalizeShiftCodes(value: unknown): ActiveShiftCode[] {
+  const raw = String(value ?? '').trim();
+  if (!raw) return [];
+  const chunks = raw
+    .replace(/เช้า/g, ' ช ')
+    .replace(/บ่าย/g, ' บ ')
+    .replace(/ดึก/g, ' ด ')
+    .replace(/ออฟ/g, ' 0 ')
+    .replace(/[,+/|\\\n\t]+/g, ' ')
+    .split(/\s+/)
+    .flatMap((part) => {
+      if (/^[ชบด]+$/.test(part) && part.length > 1) return part.split('');
+      return [part];
+    });
+  const codes = chunks.map(normalizeShiftCode).filter((code): code is ActiveShiftCode => Boolean(code));
+  return Array.from(new Set(codes)).sort((a, b) => activeShiftCodes.indexOf(a) - activeShiftCodes.indexOf(b));
+}
+
+export function getShiftCodes(plan: MonthPlan, personnelId: string, day: number): ActiveShiftCode[] {
+  const cell = plan.shifts.find((item) => item.personnelId === personnelId && item.day === day);
+  if (!cell) return [];
+  if (Array.isArray(cell.codes)) {
+    return Array.from(new Set(cell.codes.filter((code): code is ActiveShiftCode => activeShiftCodes.includes(code as ActiveShiftCode))));
+  }
+  return normalizeShiftCodes(cell.code ?? '');
+}
+
 export function getShift(plan: MonthPlan, personnelId: string, day: number): ShiftCode {
-  return plan.shifts.find((item) => item.personnelId === personnelId && item.day === day)?.code ?? '';
+  return getShiftCodes(plan, personnelId, day)[0] ?? '';
+}
+
+export function getShiftText(plan: MonthPlan, personnelId: string, day: number): string {
+  return getShiftCodes(plan, personnelId, day).join('/');
+}
+
+export function setShiftCodes(plan: MonthPlan, personnelId: string, day: number, codes: ActiveShiftCode[]): MonthPlan {
+  const cleanCodes = Array.from(new Set(codes)).filter((code): code is ActiveShiftCode => activeShiftCodes.includes(code)).sort((a, b) => activeShiftCodes.indexOf(a) - activeShiftCodes.indexOf(b));
+  const without = plan.shifts.filter((item) => !(item.personnelId === personnelId && item.day === day));
+  const shifts: ShiftCell[] = cleanCodes.length ? [...without, { personnelId, day, codes: cleanCodes }] : without;
+  return { ...plan, shifts, updatedAt: new Date().toISOString() };
 }
 
 export function setShift(plan: MonthPlan, personnelId: string, day: number, code: ShiftCode): MonthPlan {
-  const without = plan.shifts.filter((item) => !(item.personnelId === personnelId && item.day === day));
-  const shifts = code ? [...without, { personnelId, day, code }] : without;
-  return { ...plan, shifts, updatedAt: new Date().toISOString() };
+  return setShiftCodes(plan, personnelId, day, normalizeShiftCodes(code));
+}
+
+export function toggleShiftCode(plan: MonthPlan, personnelId: string, day: number, code: ActiveShiftCode): MonthPlan {
+  const current = getShiftCodes(plan, personnelId, day);
+  const next = current.includes(code) ? current.filter((item) => item !== code) : [...current, code];
+  return setShiftCodes(plan, personnelId, day, next);
 }
 
 export function validatePlan(plan: MonthPlan): ValidationIssue[] {
@@ -32,30 +74,34 @@ export function validatePlan(plan: MonthPlan): ValidationIssue[] {
   const activePeople = plan.personnel.filter((p) => p.active);
 
   for (const person of activePeople) {
-    const seen = new Set<number>();
     for (const cell of plan.shifts.filter((s) => s.personnelId === person.id)) {
-      if (seen.has(cell.day)) {
-        issues.push({ type: 'error', personnelName: person.fullName, day: cell.day, message: 'ลงเวรซ้อนในวันเดียวกัน' });
-      }
-      seen.add(cell.day);
       if (cell.day < 1 || cell.day > totalDays) {
         issues.push({ type: 'error', personnelName: person.fullName, day: cell.day, message: 'วันที่เกินจำนวนวันของเดือนนี้' });
+      }
+      const codes = getShiftCodes(plan, person.id, cell.day);
+      const hasWork = codes.some((code) => workShiftCodes.includes(code));
+      const hasNonWork = codes.some((code) => nonWorkShiftCodes.includes(code));
+      if (hasWork && hasNonWork) {
+        issues.push({ type: 'warning', personnelName: person.fullName, day: cell.day, message: 'มีทั้งเวรทำงานและวันหยุด/วันลาในช่องเดียวกัน' });
+      }
+      if (codes.includes('ช') && codes.includes('ด')) {
+        issues.push({ type: 'warning', personnelName: person.fullName, day: cell.day, message: 'มีเวรเช้าและเวรดึกในวันเดียวกัน ตรวจว่าตั้งใจหรือไม่' });
       }
     }
 
     for (let day = 1; day < totalDays; day += 1) {
-      const today = getShift(plan, person.id, day);
-      const tomorrow = getShift(plan, person.id, day + 1);
-      if (today === 'ด' && tomorrow === 'ช') {
+      const today = getShiftCodes(plan, person.id, day);
+      const tomorrow = getShiftCodes(plan, person.id, day + 1);
+      if (today.includes('ด') && tomorrow.includes('ช')) {
         issues.push({ type: 'error', personnelName: person.fullName, day: day + 1, message: `เวรดึกวันที่ ${day} ต่อเวรเช้าวันที่ ${day + 1}` });
       }
     }
   }
 
   for (let day = 1; day <= totalDays; day += 1) {
-    const morning = plan.shifts.filter((s) => s.day === day && s.code === 'ช').length;
-    const afternoon = plan.shifts.filter((s) => s.day === day && s.code === 'บ').length;
-    const night = plan.shifts.filter((s) => s.day === day && s.code === 'ด').length;
+    const morning = plan.shifts.filter((s) => s.day === day && getShiftCodes(plan, s.personnelId, day).includes('ช')).length;
+    const afternoon = plan.shifts.filter((s) => s.day === day && getShiftCodes(plan, s.personnelId, day).includes('บ')).length;
+    const night = plan.shifts.filter((s) => s.day === day && getShiftCodes(plan, s.personnelId, day).includes('ด')).length;
     if (morning === 0) issues.push({ type: 'warning', day, message: 'ยังไม่มีเวรเช้า' });
     if (afternoon === 0) issues.push({ type: 'warning', day, message: 'ยังไม่มีเวรบ่าย' });
     if (night === 0) issues.push({ type: 'warning', day, message: 'ยังไม่มีเวรดึก' });
@@ -66,8 +112,7 @@ export function validatePlan(plan: MonthPlan): ValidationIssue[] {
 
 export function summarize(plan: MonthPlan): SummaryRow[] {
   return plan.personnel.filter((p) => p.active).map((person) => {
-    const cells = plan.shifts.filter((s) => s.personnelId === person.id);
-    const count = (code: ShiftCode) => cells.filter((c) => c.code === code).length;
+    const count = (code: ActiveShiftCode) => plan.shifts.filter((cell) => cell.personnelId === person.id && getShiftCodes(plan, person.id, cell.day).includes(code)).length;
     const morning = count('ช');
     const afternoon = count('บ');
     const night = count('ด');
@@ -99,7 +144,7 @@ export function copyPlanToMonth(source: MonthPlan, month: number, buddhistYear: 
     month,
     year: buddhistYear - 543,
     buddhistYear,
-    shifts: source.shifts.filter((cell) => cell.day <= targetDays),
+    shifts: source.shifts.filter((cell) => cell.day <= targetDays).map((cell) => ({ ...cell, codes: cell.codes ?? normalizeShiftCodes(cell.code), code: undefined })),
     updatedAt: new Date().toISOString(),
   };
 }
