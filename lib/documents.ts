@@ -1,7 +1,7 @@
-import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, AlignmentType, BorderStyle } from 'docx';
+import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, AlignmentType } from 'docx';
 import { saveAs } from 'file-saver';
 import { daysInMonth, formatThaiDate, thaiMonths } from './date';
-import { getShift, summarize } from './logic';
+import { getShiftCodes, summarize } from './logic';
 import { MonthPlan, Personnel, shiftMeta } from './types';
 
 function cell(text: string, width?: number, bold = false): TableCell {
@@ -54,7 +54,7 @@ export async function exportOtDocx(plan: MonthPlan): Promise<void> {
   for (let day = 1; day <= totalDays; day += 1) {
     const orderedCodes = ['ด', 'ช', 'บ'] as const;
     for (const code of orderedCodes) {
-      const people = plan.personnel.filter((person) => getShift(plan, person.id, day) === code);
+      const people = plan.personnel.filter((person) => getShiftCodes(plan, person.id, day).includes(code));
       for (const person of people) {
         rows.push(new TableRow({ children: [
           cell(formatThaiDate(day, plan.month, plan.buddhistYear), 20),
@@ -95,7 +95,7 @@ export async function exportReserveDocx(plan: MonthPlan): Promise<void> {
     new TableRow({ children: [cell('วัน/เดือน/ปี', 25, true), cell('เวรดึก', 20, true), cell('เวรเช้า', 20, true), cell('เวรบ่าย', 20, true), cell('หมายเหตุ', 15, true)] }),
   ];
   const namesFor = (day: number, code: 'ด' | 'ช' | 'บ') => plan.personnel
-    .filter((person) => getShift(plan, person.id, day) === code)
+    .filter((person) => getShiftCodes(plan, person.id, day).includes(code))
     .map((person) => person.nickname || person.fullName.split(' ')[0])
     .join(', ');
 
