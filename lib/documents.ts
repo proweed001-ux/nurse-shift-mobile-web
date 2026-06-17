@@ -4,6 +4,8 @@ import { daysInMonth, formatThaiDate, thaiMonths } from './date';
 import { getOtCodes, getShiftCodes, summarize } from './logic';
 import { MonthPlan, Personnel, shiftMeta } from './types';
 
+const ORIGINAL_WORD_FONT = 'TH SarabunIT๙';
+
 function cell(text: string, width?: number, bold = false): TableCell {
   return new TableCell({
     width: width ? { size: width, type: WidthType.PERCENTAGE } : undefined,
@@ -11,7 +13,7 @@ function cell(text: string, width?: number, bold = false): TableCell {
     children: [
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        children: [new TextRun({ text, bold, font: 'TH Sarabun New', size: 28 })],
+        children: [new TextRun({ text, bold, font: ORIGINAL_WORD_FONT, size: 28 })],
       }),
     ],
   });
@@ -21,7 +23,7 @@ function leftCell(text: string, width?: number, bold = false): TableCell {
   return new TableCell({
     width: width ? { size: width, type: WidthType.PERCENTAGE } : undefined,
     margins: { top: 80, bottom: 80, left: 80, right: 80 },
-    children: [new Paragraph({ children: [new TextRun({ text, bold, font: 'TH Sarabun New', size: 28 })] })],
+    children: [new Paragraph({ children: [new TextRun({ text, bold, font: ORIGINAL_WORD_FONT, size: 28 })] })],
   });
 }
 
@@ -29,7 +31,7 @@ function title(text: string): Paragraph {
   return new Paragraph({
     alignment: AlignmentType.CENTER,
     spacing: { after: 120 },
-    children: [new TextRun({ text, bold: true, font: 'TH Sarabun New', size: 34 })],
+    children: [new TextRun({ text, bold: true, font: ORIGINAL_WORD_FONT, size: 34 })],
   });
 }
 
@@ -37,7 +39,7 @@ function normal(text: string, center = false): Paragraph {
   return new Paragraph({
     alignment: center ? AlignmentType.CENTER : AlignmentType.LEFT,
     spacing: { after: 80 },
-    children: [new TextRun({ text, font: 'TH Sarabun New', size: 30 })],
+    children: [new TextRun({ text, font: ORIGINAL_WORD_FONT, size: 30 })],
   });
 }
 
