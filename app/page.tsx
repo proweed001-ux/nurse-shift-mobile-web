@@ -1,12 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { daysInMonth, formatThaiDate, thaiMonths } from '../lib/date';
 import { exportMonthlySummary, exportShiftTable, importShiftExcel } from '../lib/excel';
-import { copyPlanToMonth, getShift, setShift, summarize, validatePlan } from '../lib/logic';
+import { copyPlanToMonth, getShiftCodes, getShiftText, setShiftCodes, summarize, toggleShiftCode, validatePlan } from '../lib/logic';
 import { defaultPersonnel } from '../lib/sample';
 import { listPlans, loadPersonnel, loadPlan, makeBlankPlan, savePersonnel, savePlan } from '../lib/storage';
-import { MonthPlan, Personnel, ShiftCode, shiftCodes, shiftMeta } from '../lib/types';
+import { ActiveShiftCode, MonthPlan, Personnel, activeShiftCodes, shiftMeta } from '../lib/types';
 import { exportOtDocx, exportReserveDocx, exportSummaryDocx } from '../lib/documents';
 
 type Tab = 'calendar' | 'documents' | 'report' | 'people' | 'settings';
@@ -20,11 +21,38 @@ const currentDate = new Date();
 const defaultMonth = currentDate.getMonth() + 1;
 const defaultBuddhistYear = currentDate.getFullYear() + 543;
 
-function nextShift(code: ShiftCode): ShiftCode {
-  const visible = ['ช', 'บ', 'ด', '0', 'Va', 'SL', 'PL', 'PH', ''] as ShiftCode[];
-  const index = visible.indexOf(code);
-  return visible[(index + 1) % visible.length];
-}
+const modeDetails: Record<Tab, { title: string; subFunctions: string[]; requiredDetails: string[]; formFields: string[] }> = {
+  calendar: {
+    title: 'โหมดหลัก: ตารางเวร',
+    subFunctions: ['กรอกเวรหลายค่าในช่องเดียว', 'นำเข้า Excel', 'คัดลอกจากเดือนก่อน', 'แตะช่องเพื่อแก้ไข'],
+    requiredDetails: ['ชื่อบุคลากร', 'วันที่ 1-31', 'รหัสเวร ช/บ/ด/0/Va/SL/PL/PH'],
+    formFields: ['ช่องเวรต่อคนต่อวันรองรับ 1 ค่า เช่น ช', '2 ค่า เช่น ช/บ', '3 ค่า เช่น ช/บ/ด', 'หลายค่า เช่น ช/บ/Va'],
+  },
+  documents: {
+    title: 'โหมดหลัก: เอกสาร',
+    subFunctions: ['สร้างคำสั่ง OT', 'สร้างเวรสแปล', 'สร้างสรุปเวร', 'ใช้แม่แบบ Word ต้นฉบับ'],
+    requiredDetails: ['เดือน/ปี', 'เวลาเวร', 'ชื่อ-สกุล', 'ตำแหน่ง', 'หมายเหตุ'],
+    formFields: ['ใช้ข้อมูลจากตารางเวร', 'แยกเวรดึก/เช้า/บ่ายตามรหัส', 'ส่งออก DOCX/XLSX/PDF'],
+  },
+  report: {
+    title: 'โหมดหลัก: ตรวจสอบและรายงาน',
+    subFunctions: ['ตรวจเวรดึกต่อเช้า', 'ตรวจเวรว่างรายวัน', 'นับเวรรายบุคคล', 'เตือนเวรกับวันลาในช่องเดียวกัน'],
+    requiredDetails: ['จำนวนเวรเช้า', 'จำนวนเวรบ่าย', 'จำนวนเวรดึก', 'วันลา', 'วันหยุด'],
+    formFields: ['สรุปต่อคน', 'สรุปรวมทั้งเดือน', 'แจ้ง error/warning'],
+  },
+  people: {
+    title: 'โหมดหลัก: บุคลากร',
+    subFunctions: ['เพิ่มคน', 'แก้ชื่อเล่น', 'กำหนดตำแหน่ง/ระดับ', 'ปิดใช้งานคนที่ไม่ใช้เดือนนี้'],
+    requiredDetails: ['ชื่อ-สกุล', 'ชื่อเล่น', 'ตำแหน่ง', 'ระดับ'],
+    formFields: ['ใช้ชื่อเต็มในคำสั่ง OT', 'ใช้ชื่อสั้นในเวรสแปล', 'สถานะ active/inactive'],
+  },
+  settings: {
+    title: 'โหมดหลัก: สำรองข้อมูล',
+    subFunctions: ['Backup JSON', 'Restore JSON', 'Reset ข้อมูลตัวอย่าง'],
+    requiredDetails: ['แผนเวรเดือนปัจจุบัน', 'รายชื่อบุคลากร', 'ข้อมูลช่องเวรหลายค่า'],
+    formFields: ['เก็บข้อมูลในมือถือ/เบราว์เซอร์', 'ควรสำรองหลังทำเสร็จทุกเดือน'],
+  },
+};
 
 function downloadJson(plan: MonthPlan) {
   const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json;charset=utf-8' });
@@ -66,6 +94,8 @@ export default function Home() {
     return { morning, afternoon, night, leave };
   }, [summary]);
 
+  const currentMode = modeDetails[tab];
+
   function persist(next: MonthPlan, flash = 'บันทึกแล้ว') {
     setPlan(next);
     savePlan(next);
@@ -74,16 +104,21 @@ export default function Home() {
     setTimeout(() => setMessage(''), 1800);
   }
 
-  function updateCell(personnelId: string, day: number, code: ShiftCode) {
+  function updateCell(personnelId: string, day: number, codes: ActiveShiftCode[]) {
     if (!plan) return;
-    persist(setShift(plan, personnelId, day, code));
+    persist(setShiftCodes(plan, personnelId, day, codes));
+  }
+
+  function toggleCellCode(personnelId: string, day: number, code: ActiveShiftCode) {
+    if (!plan) return;
+    persist(toggleShiftCode(plan, personnelId, day, code));
   }
 
   async function onImportExcel(event: ChangeEvent<HTMLInputElement>) {
     if (!plan || !event.target.files?.[0]) return;
     try {
       const next = await importShiftExcel(event.target.files[0], month, buddhistYear, plan.personnel);
-      persist(next, 'นำเข้า Excel สำเร็จ');
+      persist(next, 'นำเข้า Excel สำเร็จ รองรับช่องที่มีหลายค่า เช่น ช/บ หรือ ช บ ด');
     } catch (error) {
       setMessage('นำเข้า Excel ไม่สำเร็จ ตรวจว่าหัวตารางมีคอลัมน์ชื่อ และวันที่ 1-31');
       console.error(error);
@@ -144,13 +179,14 @@ export default function Home() {
   if (!plan) return null;
 
   const selectedPickerPerson = picker ? plan.personnel.find((person) => person.id === picker.personnelId) : null;
+  const selectedCodes = picker ? getShiftCodes(plan, picker.personnelId, picker.day) : [];
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div className="hero-card">
           <h1>ระบบตารางเวรพยาบาล</h1>
-          <p>เปิดบนมือถือ อัปโหลด Excel แก้เวร ตรวจความผิดพลาด และสร้างเอกสาร OT/เวรสแปล/สรุปเวรจากข้อมูลชุดเดียว</p>
+          <p>แยกเป็นโหมดหลัก/ฟังก์ชันย่อย กรอกข้อมูลแบบฟอร์ม และหนึ่งช่องต่อคนต่อวันใส่ได้ 1 ค่า 2 ค่า 3 ค่า หรือมากกว่า</p>
         </div>
         <div className="quick-grid">
           <div className="stat"><div className="stat-label">เวรเช้า</div><div className="stat-value">{dashboard.morning}</div></div>
@@ -198,10 +234,24 @@ export default function Home() {
         <button className={`tab ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>สำรองข้อมูล</button>
       </nav>
 
+      <section className="mode-panel card">
+        <div>
+          <h2>{currentMode.title}</h2>
+          <p className="hint">ฟังก์ชันย่อย: {currentMode.subFunctions.join(' · ')}</p>
+        </div>
+        <div className="mode-lists">
+          <div><b>รายละเอียดที่ต้องใส่</b>{currentMode.requiredDetails.map((item) => <span key={item}>{item}</span>)}</div>
+          <div><b>แบบฟอร์ม/ช่องข้อมูล</b>{currentMode.formFields.map((item) => <span key={item}>{item}</span>)}</div>
+        </div>
+      </section>
+
       {tab === 'calendar' && (
         <section className="card">
           <h2>ตารางเวร {thaiMonths[month - 1]} {buddhistYear}</h2>
-          <p className="hint">แตะช่องเวรเพื่อเลือก ช / บ / ด / 0 / Va / SL / PL / PH หรือแตะเร็ว ๆ เพื่อวนรหัสเวร</p>
+          <p className="hint">แตะช่องเวรเพื่อเลือกหลายค่าได้ เช่น ช, ช/บ, ด/บ หรือ ช/บ/ด</p>
+          <div className="legend-row">
+            {activeShiftCodes.map((code) => <span className={`legend-pill ${shiftMeta[code].className}`} key={code}>{code} = {shiftMeta[code].label}</span>)}
+          </div>
           <div className="grid-wrap">
             <table className="shift-table">
               <thead>
@@ -216,17 +266,16 @@ export default function Home() {
                     <td className="name-col">{person.nickname || person.fullName}</td>
                     {Array.from({ length: totalDays }, (_, i) => {
                       const day = i + 1;
-                      const code = getShift(plan, person.id, day);
-                      const className = code ? shiftMeta[code].className : 'empty-shift';
+                      const codes = getShiftCodes(plan, person.id, day);
+                      const className = codes.length === 0 ? 'empty-shift' : codes.length === 1 ? shiftMeta[codes[0]].className : 'shift-multi';
                       return (
                         <td key={day}>
                           <button
                             className={`shift-cell ${className}`}
                             title={`${person.fullName} วันที่ ${day}`}
                             onClick={() => setPicker({ personnelId: person.id, day })}
-                            onDoubleClick={() => updateCell(person.id, day, nextShift(code))}
                           >
-                            {code || '+'}
+                            {codes.length ? codes.join('/') : '+'}
                           </button>
                         </td>
                       );
@@ -243,11 +292,12 @@ export default function Home() {
         <section className="panel-grid">
           <div className="card">
             <h2>สร้างไฟล์ Word</h2>
-            <p className="hint">ไฟล์จะถูกสร้างใหม่ตามเดือนที่เลือก ไม่เขียนทับไฟล์ต้นฉบับ</p>
+            <p className="hint">ปุ่มนี้เป็นฟอร์มมาตรฐาน ส่วนฟอร์มต้นฉบับเป๊ะให้ใช้หน้าแม่แบบ Word</p>
             <div className="actions">
               <button className="btn primary" onClick={() => exportOtDocx(plan)}>คำสั่ง OT .docx</button>
               <button className="btn primary" onClick={() => exportReserveDocx(plan)}>เวรสแปล .docx</button>
               <button className="btn" onClick={() => exportSummaryDocx(plan)}>สรุปเวร .docx</button>
+              <Link className="btn primary" href="/templates">ฟอร์มต้นฉบับ Word</Link>
             </div>
           </div>
           <div className="card">
@@ -349,16 +399,24 @@ export default function Home() {
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <h2>{selectedPickerPerson.fullName}</h2>
             <p className="muted">{formatThaiDate(picker.day, month, buddhistYear)}</p>
-            <div className="shift-picker">
-              {shiftCodes.map((code) => (
-                <button
-                  key={code || 'blank'}
-                  className={`btn ${code && shiftMeta[code] ? shiftMeta[code].className : ''}`}
-                  onClick={() => { updateCell(picker.personnelId, picker.day, code); setPicker(null); }}
-                >
-                  {code || 'ว่าง'}
-                </button>
-              ))}
+            <p className="hint">เลือกได้หลายค่าในช่องเดียว กดซ้ำเพื่อเอาออก</p>
+            <div className="shift-picker multi-picker">
+              {activeShiftCodes.map((code) => {
+                const isSelected = selectedCodes.includes(code);
+                return (
+                  <button
+                    key={code}
+                    className={`btn ${shiftMeta[code].className} ${isSelected ? 'selected' : ''}`}
+                    onClick={() => toggleCellCode(picker.personnelId, picker.day, code)}
+                  >
+                    {isSelected ? '✓ ' : ''}{code}<br /><small>{shiftMeta[code].label}</small>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="actions" style={{ marginTop: 12 }}>
+              <button className="btn danger" onClick={() => updateCell(picker.personnelId, picker.day, [])}>ล้างช่องนี้</button>
+              <button className="btn primary" onClick={() => setPicker(null)}>เสร็จ</button>
             </div>
           </div>
         </div>
@@ -380,7 +438,7 @@ function PrintDocument({ plan }: { plan: MonthPlan }) {
         <tbody>
           {Array.from({ length: totalDays }, (_, i) => {
             const day = i + 1;
-            const names = (code: 'ด' | 'ช' | 'บ') => plan.personnel.filter((person) => getShift(plan, person.id, day) === code).map((person) => person.nickname || person.fullName).join(', ');
+            const names = (code: 'ด' | 'ช' | 'บ') => plan.personnel.filter((person) => getShiftCodes(plan, person.id, day).includes(code)).map((person) => person.nickname || person.fullName).join(', ');
             return <tr key={day}><td>{formatThaiDate(day, plan.month, plan.buddhistYear)}</td><td>{names('ด')}</td><td>{names('ช')}</td><td>{names('บ')}</td></tr>;
           })}
         </tbody>
