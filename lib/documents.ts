@@ -1,7 +1,7 @@
 import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, AlignmentType } from 'docx';
 import { saveAs } from 'file-saver';
 import { daysInMonth, formatThaiDate, thaiMonths } from './date';
-import { getShiftCodes, summarize } from './logic';
+import { getOtCodes, getShiftCodes, summarize } from './logic';
 import { MonthPlan, Personnel, shiftMeta } from './types';
 
 function cell(text: string, width?: number, bold = false): TableCell {
@@ -54,14 +54,14 @@ export async function exportOtDocx(plan: MonthPlan): Promise<void> {
   for (let day = 1; day <= totalDays; day += 1) {
     const orderedCodes = ['ด', 'ช', 'บ'] as const;
     for (const code of orderedCodes) {
-      const people = plan.personnel.filter((person) => getShiftCodes(plan, person.id, day).includes(code));
+      const people = plan.personnel.filter((person) => getOtCodes(plan, person.id, day).includes(code));
       for (const person of people) {
         rows.push(new TableRow({ children: [
           cell(formatThaiDate(day, plan.month, plan.buddhistYear), 20),
           cell(shiftMeta[code].time, 20),
           leftCell(person.fullName, 32),
           leftCell(positionText(person), 22),
-          cell('', 6),
+          cell('OT', 6),
         ] }));
       }
     }
@@ -72,7 +72,7 @@ export async function exportOtDocx(plan: MonthPlan): Promise<void> {
       properties: { page: { margin: { top: 720, right: 720, bottom: 720, left: 720 } } },
       children: [
         title('บัญชีรายชื่อและตารางเวลา'),
-        normal(`ขึ้นปฏิบัติงาน ประจำเดือน ${thaiMonths[plan.month - 1]} พ.ศ. ${plan.buddhistYear}`, true),
+        normal(`ขึ้นปฏิบัติงานล่วงเวลา ประจำเดือน ${thaiMonths[plan.month - 1]} พ.ศ. ${plan.buddhistYear}`, true),
         normal('กลุ่มการพยาบาล โรงพยาบาลชัยนาทนเรนทร', true),
         normal(`แนบท้ายคำสั่งโรงพยาบาลชัยนาทนเรนทร ที่        / ${plan.buddhistYear} ลงวันที่        ${thaiMonths[Math.max(plan.month - 2, 0)]} พ.ศ. ${plan.buddhistYear}`),
         new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows }),
@@ -130,18 +130,20 @@ export async function exportReserveDocx(plan: MonthPlan): Promise<void> {
 
 export async function exportSummaryDocx(plan: MonthPlan): Promise<void> {
   const rows: TableRow[] = [
-    new TableRow({ children: [cell('ชื่อ-สกุล', 30, true), cell('เช้า', 8, true), cell('บ่าย', 8, true), cell('ดึก', 8, true), cell('รวมเวร', 10, true), cell('ออฟ', 8, true), cell('ลา', 8, true), cell('วันหยุด', 10, true)] }),
+    new TableRow({ children: [cell('ชื่อ-สกุล', 28, true), cell('ช', 7, true), cell('บ', 7, true), cell('ด', 7, true), cell('รวมเวร', 9, true), cell('OT ช', 8, true), cell('OT บ', 8, true), cell('OT ด', 8, true), cell('รวม OT', 9, true), cell('ลา', 9, true)] }),
   ];
   summarize(plan).forEach((row) => {
     rows.push(new TableRow({ children: [
-      leftCell(row.personnel.fullName, 30),
-      cell(String(row.morning), 8),
-      cell(String(row.afternoon), 8),
-      cell(String(row.night), 8),
-      cell(String(row.workTotal), 10),
-      cell(String(row.off), 8),
-      cell(String(row.leaveTotal), 8),
-      cell(String(row.holiday), 10),
+      leftCell(row.personnel.fullName, 28),
+      cell(String(row.morning), 7),
+      cell(String(row.afternoon), 7),
+      cell(String(row.night), 7),
+      cell(String(row.workTotal), 9),
+      cell(String(row.otMorning), 8),
+      cell(String(row.otAfternoon), 8),
+      cell(String(row.otNight), 8),
+      cell(String(row.otTotal), 9),
+      cell(String(row.leaveTotal), 9),
     ] }));
   });
   const doc = new Document({ sections: [{ children: [title(`สรุปเวรรายเดือน ${thaiMonths[plan.month - 1]} ${plan.buddhistYear}`), new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows })] }] });
