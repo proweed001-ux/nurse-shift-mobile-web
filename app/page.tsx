@@ -4,10 +4,10 @@ import Link from 'next/link';
 import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { daysInMonth, formatThaiDate, thaiMonths } from '../lib/date';
 import { exportMonthlySummary, exportShiftTable, importShiftExcel } from '../lib/excel';
-import { copyPlanToMonth, getShiftCodes, getShiftText, setShiftCodes, summarize, toggleShiftCode, validatePlan } from '../lib/logic';
+import { copyPlanToMonth, getOtCodes, getShiftCodes, setOtCodes, setShiftCodes, summarize, toggleOtCode, toggleShiftCode, validatePlan } from '../lib/logic';
 import { defaultPersonnel } from '../lib/sample';
 import { listPlans, loadPersonnel, loadPlan, makeBlankPlan, savePersonnel, savePlan } from '../lib/storage';
-import { ActiveShiftCode, MonthPlan, Personnel, activeShiftCodes, shiftMeta } from '../lib/types';
+import { ActiveShiftCode, MonthPlan, Personnel, WorkShiftCode, activeShiftCodes, shiftMeta, workShiftCodes } from '../lib/types';
 import { exportOtDocx, exportReserveDocx, exportSummaryDocx } from '../lib/documents';
 
 type Tab = 'calendar' | 'documents' | 'report' | 'people' | 'settings';
@@ -24,20 +24,20 @@ const defaultBuddhistYear = currentDate.getFullYear() + 543;
 const modeDetails: Record<Tab, { title: string; subFunctions: string[]; requiredDetails: string[]; formFields: string[] }> = {
   calendar: {
     title: 'โหมดหลัก: ตารางเวร',
-    subFunctions: ['กรอกเวรหลายค่าในช่องเดียว', 'นำเข้า Excel', 'คัดลอกจากเดือนก่อน', 'แตะช่องเพื่อแก้ไข'],
-    requiredDetails: ['ชื่อบุคลากร', 'วันที่ 1-31', 'รหัสเวร ช/บ/ด/0/Va/SL/PL/PH'],
-    formFields: ['ช่องเวรต่อคนต่อวันรองรับ 1 ค่า เช่น ช', '2 ค่า เช่น ช/บ', '3 ค่า เช่น ช/บ/ด', 'หลายค่า เช่น ช/บ/Va'],
+    subFunctions: ['กรอกเวรหลายค่าในช่องเดียว', 'เวร OT ตัวอักษรสีแดง', 'นำเข้า Excel', 'คัดลอกจากเดือนก่อน'],
+    requiredDetails: ['ชื่อบุคลากร', 'วันที่ 1-31', 'เวรปกติ ช/บ/ด/0/Va/SL/PL/PH', 'เวร OT สีแดงเฉพาะ ช/บ/ด'],
+    formFields: ['ช่องเวรปกติใส่ได้หลายค่า เช่น ช/บ', 'ช่อง OT สีแดงใส่ได้เฉพาะ ช, บ, ด', 'เฉพาะ OT สีแดงเท่านั้นที่ถูกดึงไปคำสั่ง OT Word'],
   },
   documents: {
     title: 'โหมดหลัก: เอกสาร',
-    subFunctions: ['สร้างคำสั่ง OT', 'สร้างเวรสแปล', 'สร้างสรุปเวร', 'ใช้แม่แบบ Word ต้นฉบับ'],
+    subFunctions: ['สร้างคำสั่ง OT จาก OT สีแดง', 'สร้างเวรสแปลจากเวรปกติ', 'สร้างสรุปเวร', 'ใช้แม่แบบ Word ต้นฉบับ'],
     requiredDetails: ['เดือน/ปี', 'เวลาเวร', 'ชื่อ-สกุล', 'ตำแหน่ง', 'หมายเหตุ'],
-    formFields: ['ใช้ข้อมูลจากตารางเวร', 'แยกเวรดึก/เช้า/บ่ายตามรหัส', 'ส่งออก DOCX/XLSX/PDF'],
+    formFields: ['OT Word ใช้เฉพาะตัวแดง ช/บ/ด', 'เวรสแปลใช้เวรปกติ ช/บ/ด', 'ส่งออก DOCX/XLSX/PDF'],
   },
   report: {
     title: 'โหมดหลัก: ตรวจสอบและรายงาน',
-    subFunctions: ['ตรวจเวรดึกต่อเช้า', 'ตรวจเวรว่างรายวัน', 'นับเวรรายบุคคล', 'เตือนเวรกับวันลาในช่องเดียวกัน'],
-    requiredDetails: ['จำนวนเวรเช้า', 'จำนวนเวรบ่าย', 'จำนวนเวรดึก', 'วันลา', 'วันหยุด'],
+    subFunctions: ['ตรวจเวรดึกต่อเช้า', 'ตรวจเวรว่างรายวัน', 'นับเวรรายบุคคล', 'นับ OT แยกเช้า/บ่าย/ดึก'],
+    requiredDetails: ['จำนวนเวรเช้า', 'จำนวนเวรบ่าย', 'จำนวนเวรดึก', 'จำนวน OT', 'วันลา/วันหยุด'],
     formFields: ['สรุปต่อคน', 'สรุปรวมทั้งเดือน', 'แจ้ง error/warning'],
   },
   people: {
@@ -49,7 +49,7 @@ const modeDetails: Record<Tab, { title: string; subFunctions: string[]; required
   settings: {
     title: 'โหมดหลัก: สำรองข้อมูล',
     subFunctions: ['Backup JSON', 'Restore JSON', 'Reset ข้อมูลตัวอย่าง'],
-    requiredDetails: ['แผนเวรเดือนปัจจุบัน', 'รายชื่อบุคลากร', 'ข้อมูลช่องเวรหลายค่า'],
+    requiredDetails: ['แผนเวรเดือนปัจจุบัน', 'รายชื่อบุคลากร', 'ข้อมูลเวรปกติ', 'ข้อมูล OT สีแดง'],
     formFields: ['เก็บข้อมูลในมือถือ/เบราว์เซอร์', 'ควรสำรองหลังทำเสร็จทุกเดือน'],
   },
 };
@@ -91,7 +91,8 @@ export default function Home() {
     const afternoon = summary.reduce((sum, item) => sum + item.afternoon, 0);
     const night = summary.reduce((sum, item) => sum + item.night, 0);
     const leave = summary.reduce((sum, item) => sum + item.leaveTotal, 0);
-    return { morning, afternoon, night, leave };
+    const ot = summary.reduce((sum, item) => sum + item.otTotal, 0);
+    return { morning, afternoon, night, leave, ot };
   }, [summary]);
 
   const currentMode = modeDetails[tab];
@@ -109,16 +110,26 @@ export default function Home() {
     persist(setShiftCodes(plan, personnelId, day, codes));
   }
 
+  function updateOtCell(personnelId: string, day: number, otCodes: WorkShiftCode[]) {
+    if (!plan) return;
+    persist(setOtCodes(plan, personnelId, day, otCodes));
+  }
+
   function toggleCellCode(personnelId: string, day: number, code: ActiveShiftCode) {
     if (!plan) return;
     persist(toggleShiftCode(plan, personnelId, day, code));
+  }
+
+  function toggleCellOtCode(personnelId: string, day: number, code: WorkShiftCode) {
+    if (!plan) return;
+    persist(toggleOtCode(plan, personnelId, day, code));
   }
 
   async function onImportExcel(event: ChangeEvent<HTMLInputElement>) {
     if (!plan || !event.target.files?.[0]) return;
     try {
       const next = await importShiftExcel(event.target.files[0], month, buddhistYear, plan.personnel);
-      persist(next, 'นำเข้า Excel สำเร็จ รองรับช่องที่มีหลายค่า เช่น ช/บ หรือ ช บ ด');
+      persist(next, 'นำเข้า Excel สำเร็จ รองรับ OT เช่น OT:ช หรือ ช*');
     } catch (error) {
       setMessage('นำเข้า Excel ไม่สำเร็จ ตรวจว่าหัวตารางมีคอลัมน์ชื่อ และวันที่ 1-31');
       console.error(error);
@@ -180,19 +191,20 @@ export default function Home() {
 
   const selectedPickerPerson = picker ? plan.personnel.find((person) => person.id === picker.personnelId) : null;
   const selectedCodes = picker ? getShiftCodes(plan, picker.personnelId, picker.day) : [];
+  const selectedOtCodes = picker ? getOtCodes(plan, picker.personnelId, picker.day) : [];
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div className="hero-card">
           <h1>ระบบตารางเวรพยาบาล</h1>
-          <p>แยกเป็นโหมดหลัก/ฟังก์ชันย่อย กรอกข้อมูลแบบฟอร์ม และหนึ่งช่องต่อคนต่อวันใส่ได้ 1 ค่า 2 ค่า 3 ค่า หรือมากกว่า</p>
+          <p>เวรปกติใส่หลายค่าได้ ส่วนเวร OT เป็นตัวอักษรสีแดง เฉพาะ ช/บ/ด และใช้ดึงเข้าคำสั่ง OT Word เท่านั้น</p>
         </div>
         <div className="quick-grid">
           <div className="stat"><div className="stat-label">เวรเช้า</div><div className="stat-value">{dashboard.morning}</div></div>
           <div className="stat"><div className="stat-label">เวรบ่าย</div><div className="stat-value">{dashboard.afternoon}</div></div>
           <div className="stat"><div className="stat-label">เวรดึก</div><div className="stat-value">{dashboard.night}</div></div>
-          <div className="stat"><div className="stat-label">วันลา</div><div className="stat-value">{dashboard.leave}</div></div>
+          <div className="stat"><div className="stat-label">OT สีแดง</div><div className="stat-value">{dashboard.ot}</div></div>
         </div>
       </section>
 
@@ -248,9 +260,10 @@ export default function Home() {
       {tab === 'calendar' && (
         <section className="card">
           <h2>ตารางเวร {thaiMonths[month - 1]} {buddhistYear}</h2>
-          <p className="hint">แตะช่องเวรเพื่อเลือกหลายค่าได้ เช่น ช, ช/บ, ด/บ หรือ ช/บ/ด</p>
+          <p className="hint">แตะช่องเวรเพื่อเลือกเวรปกติ และเลือกเวร OT สีแดงแยกต่างหาก</p>
           <div className="legend-row">
             {activeShiftCodes.map((code) => <span className={`legend-pill ${shiftMeta[code].className}`} key={code}>{code} = {shiftMeta[code].label}</span>)}
+            <span className="legend-pill shift-ot-text">OT สีแดง = ใช้สร้าง Word OT เท่านั้น</span>
           </div>
           <div className="grid-wrap">
             <table className="shift-table">
@@ -267,15 +280,17 @@ export default function Home() {
                     {Array.from({ length: totalDays }, (_, i) => {
                       const day = i + 1;
                       const codes = getShiftCodes(plan, person.id, day);
+                      const otCodes = getOtCodes(plan, person.id, day);
                       const className = codes.length === 0 ? 'empty-shift' : codes.length === 1 ? shiftMeta[codes[0]].className : 'shift-multi';
                       return (
                         <td key={day}>
                           <button
-                            className={`shift-cell ${className}`}
+                            className={`shift-cell ${className} ${otCodes.length ? 'has-ot' : ''}`}
                             title={`${person.fullName} วันที่ ${day}`}
                             onClick={() => setPicker({ personnelId: person.id, day })}
                           >
-                            {codes.length ? codes.join('/') : '+'}
+                            <span>{codes.length ? codes.join('/') : '+'}</span>
+                            {otCodes.length ? <span className="ot-inline">OT:{otCodes.join('/')}</span> : null}
                           </button>
                         </td>
                       );
@@ -292,7 +307,7 @@ export default function Home() {
         <section className="panel-grid">
           <div className="card">
             <h2>สร้างไฟล์ Word</h2>
-            <p className="hint">ปุ่มนี้เป็นฟอร์มมาตรฐาน ส่วนฟอร์มต้นฉบับเป๊ะให้ใช้หน้าแม่แบบ Word</p>
+            <p className="hint">คำสั่ง OT ดึงเฉพาะ OT สีแดง ช/บ/ด ส่วนเวรสแปลดึงจากเวรปกติ ช/บ/ด</p>
             <div className="actions">
               <button className="btn primary" onClick={() => exportOtDocx(plan)}>คำสั่ง OT .docx</button>
               <button className="btn primary" onClick={() => exportReserveDocx(plan)}>เวรสแปล .docx</button>
@@ -302,7 +317,7 @@ export default function Home() {
           </div>
           <div className="card">
             <h2>Excel / PDF</h2>
-            <p className="hint">PDF บนมือถือให้กด “พิมพ์/บันทึก PDF” แล้วเลือก Save as PDF ของเครื่อง</p>
+            <p className="hint">Excel แสดง OT เป็น OT:ช/บ/ด ถ้าจะนำเข้า Excel ให้พิมพ์ OT:ช หรือ ช*</p>
             <div className="actions">
               <button className="btn" onClick={() => exportMonthlySummary(plan)}>สรุปเวร .xlsx</button>
               <button className="btn" onClick={() => exportShiftTable(plan)}>ตารางเวร .xlsx</button>
@@ -329,7 +344,7 @@ export default function Home() {
             <div className="grid-wrap">
               <table className="summary-table">
                 <thead>
-                  <tr><th>ชื่อ</th><th>ช</th><th>บ</th><th>ด</th><th>ลา</th><th>รวม</th></tr>
+                  <tr><th>ชื่อ</th><th>ช</th><th>บ</th><th>ด</th><th>OT</th><th>ลา</th><th>รวม</th></tr>
                 </thead>
                 <tbody>
                   {summary.map((row) => (
@@ -338,6 +353,7 @@ export default function Home() {
                       <td>{row.morning}</td>
                       <td>{row.afternoon}</td>
                       <td>{row.night}</td>
+                      <td className="ot-table-text">{row.otTotal}</td>
                       <td>{row.leaveTotal}</td>
                       <td>{row.workTotal}</td>
                     </tr>
@@ -399,7 +415,9 @@ export default function Home() {
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <h2>{selectedPickerPerson.fullName}</h2>
             <p className="muted">{formatThaiDate(picker.day, month, buddhistYear)}</p>
-            <p className="hint">เลือกได้หลายค่าในช่องเดียว กดซ้ำเพื่อเอาออก</p>
+            <p className="hint">เลือกเวรปกติได้หลายค่า และเลือก OT สีแดงได้เฉพาะ ช/บ/ด</p>
+
+            <h3>เวรปกติ</h3>
             <div className="shift-picker multi-picker">
               {activeShiftCodes.map((code) => {
                 const isSelected = selectedCodes.includes(code);
@@ -414,8 +432,26 @@ export default function Home() {
                 );
               })}
             </div>
+
+            <h3 className="ot-section-title">เวร OT สีแดง</h3>
+            <div className="shift-picker multi-picker ot-picker">
+              {workShiftCodes.map((code) => {
+                const isSelected = selectedOtCodes.includes(code);
+                return (
+                  <button
+                    key={`ot-${code}`}
+                    className={`btn ot-button ${isSelected ? 'selected' : ''}`}
+                    onClick={() => toggleCellOtCode(picker.personnelId, picker.day, code)}
+                  >
+                    {isSelected ? '✓ OT ' : 'OT '}{code}<br /><small>{shiftMeta[code].label}</small>
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="actions" style={{ marginTop: 12 }}>
-              <button className="btn danger" onClick={() => updateCell(picker.personnelId, picker.day, [])}>ล้างช่องนี้</button>
+              <button className="btn danger" onClick={() => updateCell(picker.personnelId, picker.day, [])}>ล้างเวรปกติ</button>
+              <button className="btn danger" onClick={() => updateOtCell(picker.personnelId, picker.day, [])}>ล้าง OT</button>
               <button className="btn primary" onClick={() => setPicker(null)}>เสร็จ</button>
             </div>
           </div>
@@ -434,12 +470,13 @@ function PrintDocument({ plan }: { plan: MonthPlan }) {
       <h2 style={{ textAlign: 'center' }}>บัญชีรายชื่อและตารางเวลาขึ้นปฏิบัติงาน</h2>
       <p style={{ textAlign: 'center' }}>ประจำเดือน {thaiMonths[plan.month - 1]} พ.ศ. {plan.buddhistYear}</p>
       <table>
-        <thead><tr><th>วัน เดือน ปี</th><th>เวรดึก</th><th>เวรเช้า</th><th>เวรบ่าย</th></tr></thead>
+        <thead><tr><th>วัน เดือน ปี</th><th>เวรดึก</th><th>เวรเช้า</th><th>เวรบ่าย</th><th>OT</th></tr></thead>
         <tbody>
           {Array.from({ length: totalDays }, (_, i) => {
             const day = i + 1;
             const names = (code: 'ด' | 'ช' | 'บ') => plan.personnel.filter((person) => getShiftCodes(plan, person.id, day).includes(code)).map((person) => person.nickname || person.fullName).join(', ');
-            return <tr key={day}><td>{formatThaiDate(day, plan.month, plan.buddhistYear)}</td><td>{names('ด')}</td><td>{names('ช')}</td><td>{names('บ')}</td></tr>;
+            const otNames = (code: 'ด' | 'ช' | 'บ') => plan.personnel.filter((person) => getOtCodes(plan, person.id, day).includes(code)).map((person) => `${person.nickname || person.fullName}(${code})`).join(', ');
+            return <tr key={day}><td>{formatThaiDate(day, plan.month, plan.buddhistYear)}</td><td>{names('ด')}</td><td>{names('ช')}</td><td>{names('บ')}</td><td>{[otNames('ด'), otNames('ช'), otNames('บ')].filter(Boolean).join(', ')}</td></tr>;
           })}
         </tbody>
       </table>
