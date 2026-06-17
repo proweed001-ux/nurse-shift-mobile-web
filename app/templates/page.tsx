@@ -6,7 +6,8 @@ import { thaiMonths } from '../../lib/date';
 import { summarize } from '../../lib/logic';
 import { listPlans, loadPersonnel, loadPlan, makeBlankPlan, savePlan } from '../../lib/storage';
 import { MonthPlan } from '../../lib/types';
-import { clearTemplate, exportOtFromTemplate, exportReserveFromTemplate, loadTemplateMeta, saveTemplateFile, TemplateKind, TemplateMeta } from '../../lib/template-documents';
+import { clearTemplate, loadTemplateMeta, saveTemplateFile, TemplateKind, TemplateMeta } from '../../lib/template-documents';
+import { exportOtFromTemplateStrict, exportReserveFromTemplateStrict } from '../../lib/template-documents-strict';
 
 const now = new Date();
 const defaultMonth = now.getMonth() + 1;
@@ -32,6 +33,7 @@ export default function TemplatesPage() {
     morning: summary.reduce((sum, row) => sum + row.morning, 0),
     afternoon: summary.reduce((sum, row) => sum + row.afternoon, 0),
     night: summary.reduce((sum, row) => sum + row.night, 0),
+    ot: summary.reduce((sum, row) => sum + row.otTotal, 0),
   }), [summary]);
 
   function refreshTemplateMeta() {
@@ -80,7 +82,7 @@ export default function TemplatesPage() {
         setMessage('ต้องอัปโหลดแม่แบบคำสั่ง OT ก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ');
         return;
       }
-      exportOtFromTemplate(plan);
+      exportOtFromTemplateStrict(plan);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างคำสั่ง OT ไม่สำเร็จ');
     }
@@ -93,7 +95,7 @@ export default function TemplatesPage() {
         setMessage('ต้องอัปโหลดแม่แบบเวรสแปลก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ');
         return;
       }
-      exportReserveFromTemplate(plan);
+      exportReserveFromTemplateStrict(plan);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างเวรสแปลไม่สำเร็จ');
     }
@@ -106,13 +108,13 @@ export default function TemplatesPage() {
       <section className="hero">
         <div className="hero-card">
           <h1>แม่แบบเอกสาร Word แบบล็อกฟอร์ม</h1>
-          <p>ใช้ไฟล์ Word ต้นฉบับเป็นแม่แบบจริง ระบบจะคงหน้ากระดาษ ฟอนต์ เส้นตาราง หัวเอกสาร และลายเซ็นเดิม แล้วแทนเฉพาะข้อความในตารางเวร</p>
+          <p>คำสั่ง OT จะดึงเฉพาะ OT สีแดง ช/บ/ด ส่วนเวรสแปลจะดึงจากเวรปกติ ช/บ/ด</p>
         </div>
         <div className="quick-grid">
           <div className="stat"><div className="stat-label">เช้า</div><div className="stat-value">{totals.morning}</div></div>
           <div className="stat"><div className="stat-label">บ่าย</div><div className="stat-value">{totals.afternoon}</div></div>
           <div className="stat"><div className="stat-label">ดึก</div><div className="stat-value">{totals.night}</div></div>
-          <div className="stat"><div className="stat-label">คนใช้งาน</div><div className="stat-value">{plan.personnel.filter((p) => p.active).length}</div></div>
+          <div className="stat"><div className="stat-label">OT สีแดง</div><div className="stat-value">{totals.ot}</div></div>
         </div>
       </section>
 
@@ -167,7 +169,7 @@ export default function TemplatesPage() {
 
         <div className="card">
           <h2>2) สร้างไฟล์จากฟอร์มเดิม</h2>
-          <p className="hint">ระบบจะใช้โครงสร้าง Word เดิมทั้งหมด แล้วแทนเฉพาะเดือน/ปี/วันที่/เวลา/ชื่อ/ตำแหน่งในตาราง</p>
+          <p className="hint">คำสั่ง OT ใช้เฉพาะตัวแดง OT:ช/บ/ด เท่านั้น</p>
           <div className="actions">
             <button className="btn primary" onClick={exportOt}>สร้างคำสั่ง OT จากฟอร์มเดิม</button>
             <button className="btn primary" onClick={exportReserve}>สร้างเวรสแปลจากฟอร์มเดิม</button>
@@ -179,7 +181,7 @@ export default function TemplatesPage() {
         <h2>ข้อมูลที่จะถูกใส่ในเอกสาร</h2>
         <div className="grid-wrap">
           <table className="summary-table">
-            <thead><tr><th>ชื่อ</th><th>ช</th><th>บ</th><th>ด</th><th>ลา</th><th>รวม</th></tr></thead>
+            <thead><tr><th>ชื่อ</th><th>ช</th><th>บ</th><th>ด</th><th>OT</th><th>ลา</th><th>รวม</th></tr></thead>
             <tbody>
               {summary.map((row) => (
                 <tr key={row.personnel.id}>
@@ -187,6 +189,7 @@ export default function TemplatesPage() {
                   <td>{row.morning}</td>
                   <td>{row.afternoon}</td>
                   <td>{row.night}</td>
+                  <td className="ot-table-text">{row.otTotal}</td>
                   <td>{row.leaveTotal}</td>
                   <td>{row.workTotal}</td>
                 </tr>
