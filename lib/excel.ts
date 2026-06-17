@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { daysInMonth } from './date';
-import { getShiftText, normalizeShiftCodes, replacePersonnelByName, summarize } from './logic';
+import { getCellDisplayText, parseShiftCellValue, replacePersonnelByName, summarize } from './logic';
 import { MonthPlan, Personnel, ShiftCell } from './types';
 
 export async function importShiftExcel(file: File, month: number, buddhistYear: number, currentPersonnel: Personnel[]): Promise<MonthPlan> {
@@ -26,8 +26,8 @@ export async function importShiftExcel(file: File, month: number, buddhistYear: 
       const possibleKeys = [String(day), `${day}`, `${day}.0`, `วันที่ ${day}`];
       const dayKey = keys.find((key) => possibleKeys.includes(key.trim()));
       if (!dayKey) continue;
-      const codes = normalizeShiftCodes(row[dayKey]);
-      if (codes.length) shifts.push({ personnelId: person.id, day, codes });
+      const { codes, otCodes } = parseShiftCellValue(row[dayKey]);
+      if (codes.length || otCodes.length) shifts.push({ personnelId: person.id, day, codes, otCodes });
     }
   });
 
@@ -51,6 +51,10 @@ export function exportMonthlySummary(plan: MonthPlan): void {
     บ่าย: row.afternoon,
     ดึก: row.night,
     รวมเวร: row.workTotal,
+    'OT เช้า': row.otMorning,
+    'OT บ่าย': row.otAfternoon,
+    'OT ดึก': row.otNight,
+    'รวม OT': row.otTotal,
     ออฟ: row.off,
     ลาพักผ่อน: row.vacation,
     ลาป่วย: row.sick,
@@ -70,7 +74,7 @@ export function exportShiftTable(plan: MonthPlan): void {
   const rows = plan.personnel.filter((p) => p.active).map((person) => {
     const row: Record<string, string | number> = { ชื่อ: person.fullName };
     for (let day = 1; day <= totalDays; day += 1) {
-      row[String(day)] = getShiftText(plan, person.id, day);
+      row[String(day)] = getCellDisplayText(plan, person.id, day);
     }
     return row;
   });
