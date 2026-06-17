@@ -1,7 +1,7 @@
 import PizZip from 'pizzip';
 import { saveAs } from 'file-saver';
 import { daysInMonth, formatThaiDate, thaiMonths } from './date';
-import { getShift } from './logic';
+import { getShiftCodes } from './logic';
 import { MonthPlan, Personnel, shiftMeta } from './types';
 
 export type TemplateKind = 'ot' | 'reserve';
@@ -210,7 +210,7 @@ function buildOtRows(plan: MonthPlan): DocxRow[] {
   for (let day = 1; day <= totalDays; day += 1) {
     const orderedCodes = ['ด', 'ช', 'บ'] as const;
     for (const code of orderedCodes) {
-      const people = plan.personnel.filter((person) => person.active && getShift(plan, person.id, day) === code);
+      const people = plan.personnel.filter((person) => person.active && getShiftCodes(plan, person.id, day).includes(code));
       for (const person of people) {
         rows.push([
           formatThaiDate(day, plan.month, plan.buddhistYear),
@@ -229,7 +229,7 @@ function buildReserveRows(plan: MonthPlan): DocxRow[] {
   const totalDays = daysInMonth(plan.month, plan.buddhistYear);
   const rows: DocxRow[] = [];
   const namesFor = (day: number, code: 'ด' | 'ช' | 'บ') => plan.personnel
-    .filter((person) => person.active && getShift(plan, person.id, day) === code)
+    .filter((person) => person.active && getShiftCodes(plan, person.id, day).includes(code))
     .map((person) => person.nickname || person.fullName.split(' ')[0])
     .join(', ');
 
