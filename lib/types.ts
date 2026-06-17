@@ -1,5 +1,7 @@
 export type ShiftCode = 'ช' | 'บ' | 'ด' | '0' | 'Va' | 'SL' | 'PL' | 'PH' | '';
 export type ActiveShiftCode = Exclude<ShiftCode, ''>;
+export type WorkShiftCode = 'ช' | 'บ' | 'ด';
+export type NonWorkShiftCode = Exclude<ActiveShiftCode, WorkShiftCode>;
 
 export type Personnel = {
   id: string;
@@ -15,8 +17,10 @@ export type ShiftCell = {
   day: number;
   /** legacy single value, kept for old saved data */
   code?: ShiftCode;
-  /** new multi-value cell: one person/day can hold 1, 2, 3 or more values */
+  /** regular shift values: one person/day can hold 1, 2, 3 or more values */
   codes?: ActiveShiftCode[];
+  /** OT shift values, shown in red and used by OT Word documents only */
+  otCodes?: WorkShiftCode[];
   note?: string;
 };
 
@@ -49,6 +53,10 @@ export type SummaryRow = {
   holiday: number;
   workTotal: number;
   leaveTotal: number;
+  otMorning: number;
+  otAfternoon: number;
+  otNight: number;
+  otTotal: number;
 };
 
 export const shiftMeta: Record<ActiveShiftCode, { label: string; time: string; start: string; end: string; className: string }> = {
@@ -64,5 +72,5 @@ export const shiftMeta: Record<ActiveShiftCode, { label: string; time: string; s
 
 export const activeShiftCodes: ActiveShiftCode[] = ['ช', 'บ', 'ด', '0', 'Va', 'SL', 'PL', 'PH'];
 export const shiftCodes: ShiftCode[] = [...activeShiftCodes, ''];
-export const workShiftCodes: ActiveShiftCode[] = ['ช', 'บ', 'ด'];
-export const nonWorkShiftCodes: ActiveShiftCode[] = ['0', 'Va', 'SL', 'PL', 'PH'];
+export const workShiftCodes: WorkShiftCode[] = ['ช', 'บ', 'ด'];
+export const nonWorkShiftCodes: NonWorkShiftCode[] = ['0', 'Va', 'SL', 'PL', 'PH'];
