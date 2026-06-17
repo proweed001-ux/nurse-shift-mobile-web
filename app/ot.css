@@ -1,0 +1,50 @@
+.shift-cell.has-ot {
+  border: 2px solid #ef4444;
+}
+
+.ot-inline {
+  display: block;
+  font-size: 11px;
+  line-height: 1;
+  color: #dc2626;
+  font-weight: 950;
+}
+
+.shift-ot-text,
+.ot-table-text {
+  color: #dc2626;
+  font-weight: 950;
+}
+
+.ot-section-title {
+  color: #dc2626;
+}
+
+.ot-picker .ot-button {
+  color: #dc2626;
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.ot-picker .ot-button.selected {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: #ef4444;
+  outline-color: rgba(220, 38, 38, .25);
+}
+
+.shift-cell {
+  display: grid;
+  gap: 1px;
+  place-items: center;
+  min-height: 38px;
+}
+
+.modal {
+  max-height: 92vh;
+  overflow: auto;
+}
+
+.modal h3 {
+  margin: 14px 0 8px;
+}
