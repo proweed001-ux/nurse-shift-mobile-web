@@ -1,0 +1,79 @@
+'use client';
+
+import { PointerEvent, useEffect, useRef, useState } from 'react';
+import { Person } from './shiftStore';
+
+export type ScanShift = 'ช' | 'บ' | 'ด' | 'unknown';
+export type ScanResult = { name: string; personId: string; date: number; shift: ScanShift; confidence: number; cropDataUrl: string; rowIndex: number; colIndex: number };
+type Pt = { x: number; y: number };
+type Draft = ScanResult & { manual?: boolean; deleted?: boolean };
+type Props = { people: Person[]; days: number; onConfirm: (rows: ScanResult[]) => void };
+declare global { interface Window { cv?: any } }
+const CELL_W = 44, CELL_H = 40, OPENCV = 'https://docs.opencv.org/4.x/opencv.js';
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function loadCv() {
+  if (window.cv?.Mat) return true;
+  if (!document.querySelector('script[data-opencv]')) {
+    const s = document.createElement('script'); s.src = OPENCV; s.async = true; s.dataset.opencv = '1'; document.body.appendChild(s);
+  }
+  for (let i = 0; i < 80; i += 1) { if (window.cv?.Mat) return true; await wait(150); }
+  return false;
+}
+function redScore(data: Uint8ClampedArray, w: number, h: number) {
+  let red = 0, minX = 9999, minY = 9999, maxX = -1, maxY = -1, top = 0, bottom = 0, left = 0, right = 0;
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+    const i = (y * w + x) * 4, r = data[i], g = data[i + 1], b = data[i + 2];
+    if (r > 110 && r > g * 1.35 && r > b * 1.25 && r - g > 35 && r - b > 25) {
+      red += 1; minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+      if (y < h / 2) top += 1; else bottom += 1; if (x < w / 2) left += 1; else right += 1;
+    }
+  }
+  const ratio = red / Math.max(1, w * h), boxW = Math.max(0, maxX - minX + 1), boxH = Math.max(0, maxY - minY + 1);
+  return { red, ratio, aspect: boxW / Math.max(1, boxH), top, bottom, left, right };
+}
+function classify(s: ReturnType<typeof redScore>): { shift: ScanShift; confidence: number } {
+  if (s.red < 10 || s.ratio < 0.0025) return { shift: 'unknown', confidence: 0.25 };
+  let shift: ScanShift = 'unknown', shape = 0.56;
+  if (s.aspect > 1.35) { shift = 'ช'; shape = 0.72; }
+  else if (s.aspect < 0.86 && s.bottom > s.top * 1.05) { shift = 'บ'; shape = 0.68; }
+  else if (s.aspect >= 0.86 && s.aspect <= 1.35) { shift = 'ด'; shape = 0.66; }
+  const confidence = Number(clamp(Math.min(s.ratio * 28 + Math.min(0.25, s.red / 900), shape), 0.3, 0.92).toFixed(2));
+  return confidence >= 0.8 ? { shift, confidence } : { shift: 'unknown', confidence };
+}
+
+export default function ShiftImageScanner({ people, days, onConfirm }: Props) {
+  const displayRef = useRef<HTMLCanvasElement>(null), sourceRef = useRef<HTMLCanvasElement>(null), fixedRef = useRef<HTMLCanvasElement>(null), imageRef = useRef<HTMLImageElement | null>(null), drag = useRef<number | null>(null);
+  const [pts, setPts] = useState<Pt[]>([]), [status, setStatus] = useState('ยังไม่ได้เลือกรูป'), [ready, setReady] = useState(false), [rows, setRows] = useState<Draft[]>([]);
+  useEffect(() => { draw(); }, [pts]);
+  function draw(img = imageRef.current, p = pts) {
+    const d = displayRef.current, s = sourceRef.current; if (!d || !s || !img) return;
+    const dc = d.getContext('2d'), sc = s.getContext('2d'); if (!dc || !sc) return;
+    sc.clearRect(0,0,s.width,s.height); sc.drawImage(img,0,0,s.width,s.height);
+    dc.clearRect(0,0,d.width,d.height); dc.drawImage(img,0,0,d.width,d.height);
+    if (p.length !== 4) return; dc.strokeStyle = '#16a34a'; dc.fillStyle = 'rgba(22,163,74,.16)'; dc.lineWidth = 2; dc.beginPath(); dc.moveTo(p[0].x,p[0].y); p.slice(1).forEach((q)=>dc.lineTo(q.x,q.y)); dc.closePath(); dc.fill(); dc.stroke();
+    p.forEach((q,i)=>{ dc.beginPath(); dc.arc(q.x,q.y,12,0,Math.PI*2); dc.fillStyle='#dc2626'; dc.fill(); dc.fillStyle='#fff'; dc.font='bold 12px system-ui'; dc.textAlign='center'; dc.textBaseline='middle'; dc.fillText(String(i+1),q.x,q.y); });
+  }
+  function pickPoint(e: PointerEvent<HTMLCanvasElement>) { const c = displayRef.current!, r = c.getBoundingClientRect(); return { x:(e.clientX-r.left)*c.width/r.width, y:(e.clientY-r.top)*c.height/r.height }; }
+  async function fileChange(file?: File) {
+    if (!file) return; setRows([]); setStatus('กำลังโหลดรูป'); const url = URL.createObjectURL(file); const img = new Image();
+    img.onload = () => { imageRef.current = img; const w = Math.min(920, img.naturalWidth), h = Math.round(img.naturalHeight * w / img.naturalWidth); [displayRef.current, sourceRef.current].forEach((c)=>{ if (c) { c.width=w; c.height=h; } }); const mx=w*.06,my=h*.08, p=[{x:mx,y:my},{x:w-mx,y:my},{x:w-mx,y:h-my},{x:mx,y:h-my}]; setPts(p); draw(img,p); setStatus('ลาก 4 มุมให้ครอบเฉพาะพื้นที่ช่องเวร ไม่รวมชื่อ/หัววันที่'); URL.revokeObjectURL(url); };
+    img.src = url;
+  }
+  function down(e: PointerEvent<HTMLCanvasElement>) { const p = pickPoint(e); let bi = -1, bd = 9999; pts.forEach((q,i)=>{ const d=Math.hypot(p.x-q.x,p.y-q.y); if(d<bd){bd=d;bi=i;} }); if (bd < 36) { drag.current = bi; e.currentTarget.setPointerCapture(e.pointerId); } }
+  function move(e: PointerEvent<HTMLCanvasElement>) { if (drag.current === null) return; const c = displayRef.current!, p = pickPoint(e), n = [...pts]; n[drag.current] = { x: clamp(p.x,0,c.width), y: clamp(p.y,0,c.height) }; setPts(n); }
+  async function scan() {
+    const src = sourceRef.current, out = fixedRef.current; if (!src || !out || pts.length !== 4) return; const W = days * CELL_W, H = people.length * CELL_H; out.width = W; out.height = H; setStatus('กำลังทำ perspective correction ด้วย OpenCV.js'); const ok = await loadCv(); setReady(ok);
+    if (ok && window.cv) { const cv=window.cv, m=cv.imread(src), dst=new cv.Mat(), size=new cv.Size(W,H), s=cv.matFromArray(4,1,cv.CV_32FC2,[pts[0].x,pts[0].y,pts[1].x,pts[1].y,pts[2].x,pts[2].y,pts[3].x,pts[3].y]), d=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,W,0,W,H,0,H]), M=cv.getPerspectiveTransform(s,d); cv.warpPerspective(m,dst,M,size,cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar()); cv.imshow(out,dst); m.delete(); dst.delete(); s.delete(); d.delete(); M.delete(); }
+    else out.getContext('2d')?.drawImage(src,0,0,W,H);
+    const ctx = out.getContext('2d'); if (!ctx) return; const found: Draft[] = [];
+    for (let r=0;r<people.length;r+=1) for (let c=0;c<days;c+=1) { const x=c*CELL_W,y=r*CELL_H,img=ctx.getImageData(x,y,CELL_W,CELL_H), sc=redScore(img.data,CELL_W,CELL_H); if(sc.red<10||sc.ratio<0.0025) continue; const crop=document.createElement('canvas'); crop.width=CELL_W; crop.height=CELL_H; crop.getContext('2d')?.drawImage(out,x,y,CELL_W,CELL_H,0,0,CELL_W,CELL_H); const cls=classify(sc); found.push({name:people[r].name,personId:people[r].id,date:c+1,shift:cls.shift,confidence:cls.confidence,cropDataUrl:crop.toDataURL('image/png'),rowIndex:r,colIndex:c}); }
+    setRows(found); setStatus(found.length ? `พบหมึกสีแดง ${found.length} ช่อง — ตรวจแก้ก่อนยืนยัน` : 'ไม่พบหมึกสีแดงในพื้นที่ที่เลือก');
+  }
+  function edit(i:number, shift:ScanShift|'delete') { setRows((old)=>old.map((x,k)=> k!==i ? x : shift==='delete' ? {...x,deleted:true,manual:true} : {...x,shift,deleted:false,manual:true,confidence:Math.max(x.confidence,0.8)})); }
+  const accepted = rows.filter((r)=>!r.deleted && r.shift !== 'unknown');
+  const need = rows.some((r)=>!r.deleted && (r.shift==='unknown'||r.confidence<0.8) && !r.manual);
+  return <section className="scanner"><style>{css}</style><h2>สแกนจากรูปถ่าย</h2><p className="hint">Grid-based Red Shift Scanner: ไม่ OCR ชื่อ ไม่ OCR วันที่ ไม่อ่านทั้งภาพ ตรวจเฉพาะหมึกสีแดงในแต่ละช่องเท่านั้น</p><div className="scanner-actions"><label className="scan-btn">ถ่ายรูป/อัปโหลด<input hidden type="file" accept="image/*" capture="environment" onChange={(e)=>fileChange(e.target.files?.[0])}/></label><button disabled={!pts.length} onClick={scan}>ปรับภาพ + วิเคราะห์สีแดง</button></div><p className="status">{status} {ready ? 'OpenCV.js พร้อมใช้' : ''}</p><div className="canvas-grid"><canvas ref={displayRef} className="preview" onPointerDown={down} onPointerMove={move} onPointerUp={()=>drag.current=null} onPointerCancel={()=>drag.current=null}/><canvas ref={fixedRef} className="rectified"/><canvas ref={sourceRef} style={{display:'none'}}/></div>{rows.length ? <div><h3>Preview + Manual correction</h3><div className="scan-list">{rows.map((r,i)=><div key={`${r.personId}-${r.date}-${i}`} className={`scan-item ${r.deleted?'deleted':''} ${(r.shift==='unknown'||r.confidence<0.8)&&!r.manual?'need':''}`}><img src={r.cropDataUrl} alt="cell crop"/><div><b>{r.name}</b><span>วันที่ {r.date} | {r.deleted?'ลบ':r.shift} | confidence {r.confidence}</span><div className="mini"><button onClick={()=>edit(i,'ช')}>ช</button><button onClick={()=>edit(i,'บ')}>บ</button><button onClick={()=>edit(i,'ด')}>ด</button><button onClick={()=>edit(i,'delete')}>ลบ</button></div></div></div>)}</div><h3>JSON ผลลัพธ์</h3><pre>{JSON.stringify(accepted.map(({name,date,shift,confidence})=>({name,date,shift,confidence})),null,2)}</pre><button className="confirm" disabled={!accepted.length||need} onClick={()=>onConfirm(accepted)}>ยืนยันและเติมลงตารางเวร</button>{need ? <p className="warn">ยังมีช่อง confidence ต่ำกว่า 0.8 หรือ unknown ต้องตรวจเองก่อน</p> : null}</div> : null}</section>;
+}
+const css = `.scanner{background:white;border-radius:18px;padding:12px;box-shadow:0 8px 22px #cbd5e1;margin:10px 0}.hint{color:#64748b}.scanner-actions{display:grid;grid-template-columns:1fr;gap:8px}.scan-btn,.scanner button{border:0;border-radius:14px;background:#e2e8f0;color:#0f172a;padding:12px;font-weight:800;text-align:center}.scan-btn{background:#2563eb;color:white}.scanner button:disabled{opacity:.5}.status{background:#eff6ff;border-radius:12px;padding:10px}.canvas-grid{display:grid;gap:10px}.preview,.rectified{width:100%;max-height:520px;border:1px solid #cbd5e1;border-radius:14px;background:#0f172a;touch-action:none}.rectified{max-height:260px;background:white}.scan-list{display:grid;gap:8px}.scan-item{display:grid;grid-template-columns:56px 1fr;gap:8px;border:1px solid #e2e8f0;border-radius:14px;padding:8px;align-items:center}.scan-item.need{border-color:#f59e0b;background:#fffbeb}.scan-item.deleted{opacity:.45}.scan-item img{width:56px;height:44px;object-fit:contain;background:white;border:1px solid #e2e8f0;border-radius:8px}.scan-item span{display:block;color:#64748b;font-size:12px}.mini{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}.mini button{padding:8px}.confirm{margin-top:10px;background:#16a34a!important;color:white!important;width:100%}.warn{background:#fef3c7;color:#92400e;border-radius:12px;padding:8px}pre{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:12px;overflow:auto}@media(min-width:760px){.scanner-actions{grid-template-columns:1fr 1fr}.canvas-grid{grid-template-columns:1.2fr .8fr}.scan-list{grid-template-columns:1fr 1fr}}`;
