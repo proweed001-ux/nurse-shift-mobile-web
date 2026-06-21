@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import ShiftImageScanner, { ScanResult } from './ShiftImageScanner';
+import ShiftImageScanner, { ScanResult } from './ShiftImageScannerV2';
 import {
   Code,
   Person,
