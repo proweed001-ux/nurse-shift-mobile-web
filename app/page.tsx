@@ -1,12 +1,43 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+
+type Code = 'ช' | 'บ' | 'ด' | '0' | 'Va' | 'SL' | 'PL' | 'PH';
+type Person = { id: string; name: string; active: boolean };
+type Plan = { month: number; year: number; people: Person[]; cells: Record<string, string[]>; ot: Record<string, string[]> };
+const codes: Code[] = ['ช','บ','ด','0','Va','SL','PL','PH'];
+const months = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+const now = new Date();
+const sample: Person[] = [{ id: 'p1', name: 'น.ส.กนกพร ตัวอย่าง', active: true }, { id: 'p2', name: 'น.ส.มนัสนันท์ ตัวอย่าง', active: true }, { id: 'p3', name: 'น.ส.สุพัตรา ตัวอย่าง', active: true }];
+const key = (m: number, y: number) => `x10-${y}-${m}`;
+const cid = (p: string, d: number) => `${p}:${d}`;
+const days = (m: number, y: number) => new Date(y - 543, m, 0).getDate();
+const blank = (m: number, y: number): Plan => ({ month: m, year: y, people: sample, cells: {}, ot: {} });
+const text = (p: Plan, id: string) => [...(p.cells[id] || []), ...(p.ot[id] || []).map((x) => `OT:${x}`)].join(' ');
+
 export default function Home() {
-  return (
-    <main style={{ padding: 16, fontFamily: 'system-ui', maxWidth: 960, margin: '0 auto' }}>
-      <h1>Nurse Shift Pro X10</h1>
-      <p>ระบบตารางเวรพยาบาลเวอร์ชัน X10 กำลังจัดชุดฟังก์ชันเต็มเข้าหน้าแรก</p>
-      <section style={{ display: 'grid', gap: 12 }}>
-        <a href="/templates" style={{ padding: 16, borderRadius: 12, background: '#dbeafe', color: '#1e3a8a', fontWeight: 800, textDecoration: 'none' }}>เปิดหน้าแม่แบบ Word</a>
-        <a href="https://nurse-shift-mobile-web-proweed-s-projects.vercel.app/templates" style={{ padding: 16, borderRadius: 12, background: '#e2e8f0', color: '#0f172a', fontWeight: 800, textDecoration: 'none' }}>เปิดจากโดเมนหลัก</a>
-      </section>
-    </main>
-  );
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear() + 543);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [mode, setMode] = useState<'command' | 'table' | 'check' | 'people' | 'backup'>('command');
+  const [pick, setPick] = useState<{ person: Person; day: number } | null>(null);
+  const [newName, setNewName] = useState('');
+  useEffect(() => { try { setPlan(JSON.parse(localStorage.getItem(key(month, year)) || '') as Plan); } catch { setPlan(blank(month, year)); } }, [month, year]);
+  const totalDays = days(month, year);
+  const active = plan?.people.filter((p) => p.active) || [];
+  const issues = useMemo(() => {
+    if (!plan) return [] as string[];
+    const out: string[] = [];
+    for (let d = 1; d <= totalDays; d++) for (const c of ['ช','บ','ด']) if (!active.some((p) => (plan.cells[cid(p.id,d)] || []).includes(c))) out.push(`วันที่ ${d} ยังไม่มีเวร ${c}`);
+    for (const p of active) for (let d = 1; d <= totalDays; d++) if ((plan.cells[cid(p.id,d)] || []).includes('ด') && (plan.cells[cid(p.id,d+1)] || []).includes('ช')) out.push(`${p.name} ดึกต่อเช้า วันที่ ${d}-${d+1}`);
+    return out;
+  }, [plan, active, totalDays]);
+  if (!plan) return null;
+  function save(next: Plan) { setPlan(next); localStorage.setItem(key(next.month, next.year), JSON.stringify(next)); }
+  function toggle(person: Person, day: number, target: 'cells' | 'ot', code: string) { const id = cid(person.id, day); const list = plan[target][id] || []; const next = list.includes(code) ? list.filter((x) => x !== code) : [...list, code]; save({ ...plan, [target]: { ...plan[target], [id]: next } }); }
+  function csv() { const rows = active.map((p) => [p.name, ...Array.from({ length: totalDays }, (_, i) => text(plan, cid(p.id, i + 1)))].map((x) => `"${x}"`).join(',')); const data = '\ufeffชื่อ,' + Array.from({length: totalDays}, (_,i)=>i+1).join(',') + '\n' + rows.join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: 'text/csv;charset=utf-8' })); a.download = `ตารางเวร_X10_${month}_${year}.csv`; a.click(); }
+  function backup() { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(plan,null,2)], { type: 'application/json' })); a.download = `backup_X10_${month}_${year}.json`; a.click(); }
+  return <main className="x"><style>{css}</style><nav>{['command','table','check','people','backup'].map((m) => <button key={m} className={mode===m?'on':''} onClick={() => setMode(m as any)}>{m==='command'?'Command':m==='table'?'ตารางเวร':m==='check'?'ตรวจสอบ':m==='people'?'บุคลากร':'Backup'}</button>)}<a href="/templates">แม่แบบ Word</a></nav><section className="hero"><h1>Nurse Shift Pro X10</h1><p>เวอร์ชันใหม่ที่เห็นทันที: Command Center, ตารางแตะกรอก, OT สีแดง, Smart Check, Export CSV/PDF/JSON</p></section><section className="bar"><select value={month} onChange={(e)=>setMonth(+e.target.value)}>{months.map((m,i)=><option value={i+1} key={m}>{m}</option>)}</select><input value={year} onChange={(e)=>setYear(+e.target.value||2569)} /><button onClick={() => save(blank(month, year))}>สร้างเดือนใหม่</button></section>{mode==='command' && <section className="grid"><Card title="คำสั่งเร็ว"><button onClick={()=>setMode('table')}>ลงเวร</button><button onClick={csv}>Export CSV</button><button onClick={()=>window.print()}>PDF</button><button onClick={backup}>Backup</button></Card><Card title="ภาพรวม"><b>คนใช้งาน {active.length}</b><b>ปัญหา {issues.length}</b><b>ช่องที่กรอก {Object.keys(plan.cells).length}</b></Card></section>}{mode==='table' && <section><div className="actions"><button onClick={csv}>CSV</button><button onClick={()=>window.print()}>PDF</button><button onClick={backup}>Backup</button></div><div className="wrap"><table><thead><tr><th className="name">ชื่อ</th>{Array.from({length:totalDays},(_,i)=><th key={i}>{i+1}</th>)}</tr></thead><tbody>{active.map((p)=><tr key={p.id}><td className="name">{p.name}</td>{Array.from({length:totalDays},(_,i)=>{const id=cid(p.id,i+1), t=text(plan,id); return <td className={t.includes('OT')?'ot':''} onClick={()=>setPick({person:p,day:i+1})} key={id}>{t||'+'}</td>})}</tr>)}</tbody></table></div></section>}{mode==='check' && <section className="card"><h2>Smart Check</h2>{issues.length?issues.map((i)=><p className="warn" key={i}>{i}</p>):<p>ไม่พบปัญหา</p>}</section>}{mode==='people' && <section className="card"><input value={newName} onChange={(e)=>setNewName(e.target.value)} placeholder="ชื่อ-สกุล"/><button onClick={()=>{ if(newName.trim()) { save({...plan, people:[...plan.people,{id:'p'+Date.now(),name:newName.trim(),active:true}]}); setNewName(''); }}}>เพิ่มคน</button>{plan.people.map((p)=><p key={p.id}><input value={p.name} onChange={(e)=>save({...plan, people:plan.people.map((x)=>x.id===p.id?{...x,name:e.target.value}:x)})}/><label><input type="checkbox" checked={p.active} onChange={()=>save({...plan, people:plan.people.map((x)=>x.id===p.id?{...x,active:!x.active}:x)})}/> ใช้งาน</label></p>)}</section>}{mode==='backup' && <section className="card"><button onClick={backup}>Backup JSON</button><pre>{JSON.stringify({เดือน:month,ปี:year,คน:plan.people.length,ช่อง:Object.keys(plan.cells).length},null,2)}</pre></section>}{pick && <div className="modal" onClick={()=>setPick(null)}><div className="box" onClick={(e)=>e.stopPropagation()}><h2>{pick.person.name}</h2><p>วันที่ {pick.day}</p><h3>เวรปกติ</h3><div className="pick">{codes.map((c)=><button key={c} className={(plan.cells[cid(pick.person.id,pick.day)]||[]).includes(c)?'on':''} onClick={()=>toggle(pick.person,pick.day,'cells',c)}>{c}</button>)}</div><h3>OT สีแดง</h3><div className="pick">{['ช','บ','ด'].map((c)=><button key={c} className={(plan.ot[cid(pick.person.id,pick.day)]||[]).includes(c)?'on red':'red'} onClick={()=>toggle(pick.person,pick.day,'ot',c)}>{c}</button>)}</div><button onClick={()=>setPick(null)}>ปิด</button></div></div>}</main>;
 }
+function Card({title,children}:{title:string;children:React.ReactNode}){return <section className="card"><h2>{title}</h2>{children}</section>}
+const css=`body{margin:0;background:#f1f5f9;font-family:system-ui;color:#0f172a}.x{max-width:1180px;margin:auto;padding:12px}button,a,label{border:0;border-radius:14px;background:#e2e8f0;color:#0f172a;padding:12px;font-weight:800;text-decoration:none;text-align:center}.on{background:#2563eb!important;color:white}nav,.bar,.actions{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}.hero{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:white;border-radius:22px;padding:18px}select,input{border:1px solid #cbd5e1;border-radius:12px;padding:12px;font-size:16px}.grid{display:grid;gap:12px}.card,.wrap{background:white;border-radius:18px;padding:12px;box-shadow:0 8px 22px #cbd5e1}.card button{margin:4px}.wrap{overflow:auto;padding:0}table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13px}th,td{border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;min-width:52px;height:44px;text-align:center;padding:4px}th{position:sticky;top:0;background:#dbeafe;z-index:2}.name{position:sticky;left:0;z-index:3;min-width:150px;text-align:left;background:white}.ot,.red{color:#dc2626}.warn{background:#fef3c7;color:#92400e;border-radius:12px;padding:8px}.modal{position:fixed;inset:0;background:#0008;display:grid;place-items:center;padding:12px}.box{background:white;border-radius:22px;padding:16px;width:min(420px,100%)}.pick{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}pre{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:12px}@media(min-width:760px){nav{grid-template-columns:repeat(6,1fr)}.bar{grid-template-columns:1fr 1fr auto}.grid{grid-template-columns:1fr 1fr}}@media print{nav,.bar,.actions,.modal,button,a,label{display:none!important}.card,.wrap,.hero{box-shadow:none}.x{max-width:none}th,td{font-size:9px;min-width:28px}}`;
