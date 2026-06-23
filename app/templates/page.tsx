@@ -1,23 +1,20 @@
 'use client';
 
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { thaiMonths } from '../../lib/date';
 import { summarize } from '../../lib/logic';
 import { MonthPlan } from '../../lib/types';
-import { clearTemplate, loadTemplateMeta, saveTemplateFile, TemplateKind, TemplateMeta } from '../../lib/template-documents';
-import { exportOtFromTemplateStrict2, exportReserveFromTemplateStrict2 } from '../../lib/template-documents-strict2';
+import { exportOtDocx, exportReserveDocx, exportSummaryDocx } from '../../lib/documents';
 import { ShiftPlan, listenPlanSync, loadCurrentPlan, loadPlan, savePlan, toLegacyPlan } from '../shiftStore';
 
 export default function TemplatesPage() {
   const [plan, setPlan] = useState<ShiftPlan | null>(null);
   const [message, setMessage] = useState('');
-  const [templateMeta, setTemplateMeta] = useState<Record<TemplateKind, TemplateMeta | null>>({ ot: null, reserve: null });
 
   useEffect(() => {
     const current = savePlan(loadCurrentPlan());
     setPlan(current);
-    refreshTemplateMeta();
     return listenPlanSync((next) => setPlan(next));
   }, []);
 
@@ -30,52 +27,38 @@ export default function TemplatesPage() {
     ot: summary.reduce((sum, row) => sum + row.otTotal, 0),
   }), [summary]);
 
-  function refreshTemplateMeta() {
-    setTemplateMeta({ ot: loadTemplateMeta('ot'), reserve: loadTemplateMeta('reserve') });
-  }
-
   function changeMonth(month: number, year: number) {
     const next = savePlan(loadPlan(month, year));
     setPlan(next);
   }
 
-  async function handleTemplateUpload(kind: TemplateKind, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      await saveTemplateFile(kind, file);
-      refreshTemplateMeta();
-      setMessage(kind === 'ot' ? 'บันทึกแม่แบบคำสั่ง OT แล้ว' : 'บันทึกแม่แบบเวรสแปลแล้ว');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'บันทึกแม่แบบไม่สำเร็จ');
-    } finally {
-      event.target.value = '';
-    }
-  }
-
-  function removeTemplate(kind: TemplateKind) {
-    clearTemplate(kind);
-    refreshTemplateMeta();
-    setMessage(kind === 'ot' ? 'ลบแม่แบบคำสั่ง OT แล้ว' : 'ลบแม่แบบเวรสแปลแล้ว');
-  }
-
-  function exportOt() {
+  async function exportOt() {
     if (!legacyPlan) return;
     try {
-      if (!templateMeta.ot) { setMessage('ต้องอัปโหลดแม่แบบคำสั่ง OT ก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ'); return; }
-      exportOtFromTemplateStrict2(legacyPlan);
+      await exportOtDocx(legacyPlan);
+      setMessage('ดาวน์โหลดคำสั่ง OT เป็นไฟล์ .docx ที่เปิดได้แล้ว');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างคำสั่ง OT ไม่สำเร็จ');
     }
   }
 
-  function exportReserve() {
+  async function exportReserve() {
     if (!legacyPlan) return;
     try {
-      if (!templateMeta.reserve) { setMessage('ต้องอัปโหลดแม่แบบเวรสแปลก่อน เพื่อคงฟอร์มต้นฉบับเป๊ะ'); return; }
-      exportReserveFromTemplateStrict2(legacyPlan);
+      await exportReserveDocx(legacyPlan);
+      setMessage('ดาวน์โหลดเวรสแปลเป็นไฟล์ .docx ที่เปิดได้แล้ว');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'สร้างเวรสแปลไม่สำเร็จ');
+    }
+  }
+
+  async function exportSummary() {
+    if (!legacyPlan) return;
+    try {
+      await exportSummaryDocx(legacyPlan);
+      setMessage('ดาวน์โหลดสรุปเวรเป็นไฟล์ .docx ที่เปิดได้แล้ว');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'สร้างสรุปเวรไม่สำเร็จ');
     }
   }
 
@@ -85,8 +68,8 @@ export default function TemplatesPage() {
     <main className="app-shell">
       <section className="hero">
         <div className="hero-card">
-          <h1>แม่แบบเอกสาร Word แบบล็อกฟอร์ม</h1>
-          <p>หน้านี้อ่านข้อมูลจาก Store กลางเดียวกับหน้าลงเวรทันที</p>
+          <h1>Export Word จากข้อมูลตารางเวรจริง</h1>
+          <p>แก้แล้ว: ไม่ patch ไฟล์แม่แบบด้วย XML ตรง ๆ เพราะทำให้ Word เปิดไม่ได้ในบางเครื่อง ตอนนี้สร้าง .docx ใหม่ด้วยไลบรารี docx จากข้อมูล Store กลางโดยตรง</p>
         </div>
         <div className="quick-grid">
           <div className="stat"><div className="stat-label">เช้า</div><div className="stat-value">{totals.morning}</div></div>
@@ -119,37 +102,22 @@ export default function TemplatesPage() {
 
       <section className="panel-grid">
         <div className="card">
-          <h2>1) ตั้งค่าแม่แบบ Word ต้นฉบับ</h2>
-          <p className="hint">ต้องอัปโหลดไฟล์ต้นฉบับ .docx ก่อนสร้างเอกสาร เพื่อคงฟอร์มเดิม</p>
-          <div className="person-card">
-            <div className="person-title">คำสั่ง OT พยาบาล</div>
-            <div className="muted">{templateMeta.ot ? `ล็อกฟอร์มจากไฟล์: ${templateMeta.ot.name}` : 'ยังไม่ได้ตั้งค่า'}</div>
-            <div className="actions">
-              <label className="btn primary">อัปโหลดแม่แบบ OT<input hidden type="file" accept=".docx" onChange={(event) => handleTemplateUpload('ot', event)} /></label>
-              {templateMeta.ot ? <button className="btn danger" onClick={() => removeTemplate('ot')}>ลบ</button> : null}
-            </div>
-          </div>
-          <div className="person-card" style={{ marginTop: 10 }}>
-            <div className="person-title">เวรสแปล / เวรสำรอง</div>
-            <div className="muted">{templateMeta.reserve ? `ล็อกฟอร์มจากไฟล์: ${templateMeta.reserve.name}` : 'ยังไม่ได้ตั้งค่า'}</div>
-            <div className="actions">
-              <label className="btn primary">อัปโหลดแม่แบบเวรสแปล<input hidden type="file" accept=".docx" onChange={(event) => handleTemplateUpload('reserve', event)} /></label>
-              {templateMeta.reserve ? <button className="btn danger" onClick={() => removeTemplate('reserve')}>ลบ</button> : null}
-            </div>
+          <h2>สร้างเอกสาร Word ที่เปิดได้</h2>
+          <p className="hint">คำสั่ง OT ใช้เฉพาะ OT สีแดงจากตารางจริง ส่วนเวรสแปลใช้เวรปกติจากตารางจริง</p>
+          <div className="actions">
+            <button className="btn primary" onClick={exportOt}>ดาวน์โหลด Word เวร OT</button>
+            <button className="btn primary" onClick={exportReserve}>ดาวน์โหลด Word เวรสแปล</button>
+            <button className="btn primary" onClick={exportSummary}>ดาวน์โหลด Word สรุปเวร</button>
           </div>
         </div>
         <div className="card">
-          <h2>2) สร้างไฟล์จากข้อมูลกลาง</h2>
-          <p className="hint">คำสั่ง OT ใช้เฉพาะ OT สีแดง ส่วนเวรสแปลใช้เวรปกติ</p>
-          <div className="actions">
-            <button className="btn primary" onClick={exportOt}>สร้างคำสั่ง OT</button>
-            <button className="btn primary" onClick={exportReserve}>สร้างเวรสแปล</button>
-          </div>
+          <h2>สาเหตุที่ไฟล์เดิมเปิดไม่ได้</h2>
+          <p className="hint">ตัวเดิมแก้ไฟล์ .docx แม่แบบโดยเขียน XML ใน word/document.xml ตรง ๆ ถ้าโครงตารางในไฟล์จริงมี merge cell หรือ tag ซับซ้อน Word จะมองว่าไฟล์เสียหาย รอบนี้เปลี่ยนเป็นสร้าง DOCX ใหม่ที่ถูกต้องจากข้อมูลจริงในตาราง</p>
         </div>
       </section>
 
       <section className="card" style={{ marginTop: 14 }}>
-        <h2>ข้อมูลจาก Store กลางที่จะถูกใส่ในเอกสาร</h2>
+        <h2>ข้อมูลที่จะถูกใส่ในเอกสาร</h2>
         <div className="grid-wrap">
           <table className="summary-table">
             <thead><tr><th>ชื่อ</th><th>ช</th><th>บ</th><th>ด</th><th>OT</th><th>ลา</th><th>รวม</th></tr></thead>
